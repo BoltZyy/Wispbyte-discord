@@ -1,0 +1,22 @@
+{
+  "name": "discord-ai-bot",
+  "version": "1.1.0",
+  "description": "Discord bot dengan multi-provider AI load balancer & fallback (Gemini, Groq, OpenRouter)",
+  "main": "index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@google/genai": "^1.37.0",
+    "discord.js": "^14.16.3",
+    "dotenv": "^16.4.5",
+    "groq-sdk": "^0.9.1",
+    "openai": "^4.73.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
