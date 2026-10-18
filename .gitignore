@@ -1,3 +1,8 @@
-.env
 node_modules/
+.env
 
+# data runtime (ditulis bot saat berjalan) — jangan sampai menimpa data di Wispbyte
+config.json
+responders.json
+blocklist.json
+model_config.json
