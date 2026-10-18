@@ -1,0 +1,671 @@
+--- ../dc/index.js	2026-10-17 23:25:18.000000000 +0000
++++ index.js	2026-10-17 18:26:16.055284403 +0000
+@@ -8,7 +8,7 @@
+   Client, GatewayIntentBits, Partials, Options,
+   REST, Routes, SlashCommandBuilder,
+   ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder,
+-  EmbedBuilder, PermissionFlagsBits, ActivityType,
++  EmbedBuilder, PermissionFlagsBits, ActivityType, MessageFlags, Events,
+ } = require('discord.js');
+ 
+ /* =========================================================================
+@@ -361,104 +361,90 @@
+  * PROVIDER_MODEL_TIERS — daftar model per provider, urutan = prioritas fallback
+  * default (sebelum ada override manual dari /model).
+  *
+- * PENTING SOAL VOLATILITAS (hasil live search Agustus 2026):
+- * - Groq paling stabil dari 3 provider — slug di bawah relatif aman.
+- * - Gemini: gemini-2.5-pro kemungkinan besar SUDAH BERBAYAR sejak April 2026,
+- *   jadi sengaja tidak dimasukkan. gemini-2.0-flash resmi dimatikan 1 Juni 2026.
+- * - OpenRouter: katalog ":free" terbukti berputar MINGGUAN (15 model per 27 Juli
+- *   2026, turun dari 20 sembilan hari sebelumnya — termasuk slug lama kamu,
+- *   meta-llama/llama-3.3-70b-instruct:free, yang didelisting di rentang itu).
+- *   Karena itu tier OpenRouter diprioritaskan ke `openrouter/free` — auto-router
+- *   resmi OpenRouter yang otomatis pilih model gratis yang sedang tersedia,
+- *   jauh lebih tahan terhadap rotasi dibanding hardcode 1 slug spesifik.
+- *
+- * File ini sengaja jadi satu-satunya sumber kebenaran untuk slug model — kalau
+- * ada yang deprecated lagi, edit array di sini saja, tidak perlu sentuh logic
+- * lain. Verifikasi berkala disarankan di:
+- *   Groq       -> https://console.groq.com/docs/models
+- *   Gemini     -> https://ai.google.dev/gemini-api/docs/models
++ * Terakhir diverifikasi 18 Oktober 2026. File ini adalah satu-satunya sumber
++ * kebenaran untuk slug model — kalau ada yang deprecated lagi, edit array di
++ * sini saja, tidak perlu menyentuh logic lain. Verifikasi berkala di:
++ *   Groq       -> https://console.groq.com/docs/models  (+ /docs/deprecations)
++ *   Gemini     -> https://ai.google.dev/gemini-api/docs/models  (+ /docs/deprecations)
+  *   OpenRouter -> https://openrouter.ai/models?max_price=0
++ *
++ * "models"     = ikut fallback OTOMATIS, urutan = urutan coba.
++ * "manualOnly" = HANYA bisa dipilih lewat /model set — TIDAK PERNAH ikut
++ *                fallback otomatis (dan tidak mengganggu fallback provider lain).
+  */
+ const PROVIDER_MODEL_TIERS = {
+   gemini: {
+     label: 'Gemini',
+-    // Diverifikasi Agustus 2026 langsung dari ai.google.dev, docs.cloud.google.com,
+-    // & blog resmi Google. gemini-1.5-* dan gemini-2.0-flash SENGAJA tidak
+-    // dimasukkan — sudah deprecated/pensiun resmi per Google.
+-    //
+-    // "models"     = ikut fallback OTOMATIS, urutan = urutan coba.
+-    // "manualOnly" = HANYA bisa dipilih lewat /model set — TIDAK PERNAH ikut
+-    //                fallback otomatis. Untuk model yang baru rilis / belum
+-    //                jelas rate limit free tier-nya, supaya tidak diam-diam
+-    //                kepakai berkali-kali saat provider lain gagal.
+-    //
+-    // 3.6 Flash diprioritaskan PALING ATAS: dikonfirmasi Google 17% lebih
+-    // hemat output token dibanding 3.5 Flash untuk tugas setara, DAN yang
+-    // dapat "Free Standard usage" eksplisit di free tier (bukan cuma murah
+-    // per-token, tapi juga paling mapan statusnya di free tier).
+-    // 3.7 Flash (rilis 13 Agu 2026, baru ~5 hari) sengaja manualOnly dulu —
+-    // belum ada cukup data soal rate limit free tier-nya dibanding 3.6.
++    // gemini-3.5-flash dan seluruh lini 2.x sengaja dibuang (deprecated).
+     models: [
+-      { id: 'gemini-3.6-flash',                       label: 'Gemini 3.6 Flash (paling hemat token & mapan di free tier)' },
+-      { id: 'gemini-3.5-flash',                       label: 'Gemini 3.5 Flash' },
+-      { id: 'gemini-3.5-flash-lite',                  label: 'Gemini 3.5 Flash-Lite' },
+-      { id: 'gemini-3.1-flash-lite',                  label: 'Gemini 3.1 Flash-Lite (GA, hemat & cepat)' },
+-      { id: 'gemini-2.5-flash',                       label: 'Gemini 2.5 Flash' },
+-      { id: 'gemini-2.5-flash-lite',                  label: 'Gemini 2.5 Flash-Lite' },
+-      { id: 'gemini-2.5-flash-preview-09-2025',       label: 'Gemini 2.5 Flash (Preview 09-2025)' },
+-      { id: 'gemini-2.5-flash-lite-preview-09-2025',  label: 'Gemini 2.5 Flash-Lite (Preview 09-2025)' },
+-      { id: 'gemini-2.5-pro',                         label: 'Gemini 2.5 Pro (cek kuota — sebagian akun sudah berbayar)' },
++      { id: 'gemini-3.6-flash',      label: 'Gemini 3.6 Flash' },
++      { id: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite' },
+     ],
+     manualOnly: [
+-      { id: 'gemini-3.7-flash', label: 'Gemini 3.7 Flash — baru rilis, belum jelas rate limit free tier, HANYA manual via /model' },
++      { id: 'gemini-3.8-flash',      label: 'Gemini 3.8 Flash — manual dulu: kelayakan API & rate limit akun belum diuji' },
++      { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite — manual saja, dijadwalkan berhenti 7 Mei 2027 (pakai 3.5 Flash-Lite)' },
+     ],
+   },
+   groq: {
+     label: 'Groq',
++    // llama-3.1-8b-instant (shutdown 16 Agu 2026) dan moonshotai/kimi-k2-instruct
++    // (deprecated) sengaja dibuang.
+     models: [
+-      { id: 'openai/gpt-oss-20b',   label: 'gpt-oss-20b' },
+-      { id: 'llama-3.1-8b-instant',      label: 'Llama 3.1 8B Instant' },
+-      { id: 'openai/gpt-oss-120b',       label: 'GPT-OSS 120B' },
+-      { id: 'qwen/qwen3.8-27b',            label: 'Qwen3.8 27B' },
+-      { id: 'moonshotai/kimi-k2-instruct', label: 'Kimi K2' },
++      { id: 'openai/gpt-oss-20b',  label: 'gpt-oss-20b' },
++      { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B' },
++      { id: 'qwen/qwen3.8-27b',    label: 'Qwen3.8 27B' },
+     ],
+   },
+   openrouter: {
+     label: 'OpenRouter',
++    // Katalog ":free" OpenRouter berputar cepat — itulah kenapa hanya auto-router
++    // openrouter/free yang dipakai. meta-llama/llama-3.3-70b-instruct:free dibuang:
++    // API membalas HTTP 404 (versi gratis sudah tidak ada) pada 18 Okt 2026.
++    // OpenRouter dipakai sebagai pilihan TERAKHIR (lihat LAST_RESORT_PROVIDER_TYPES).
+     models: [
+-      { id: 'openrouter/free', label: 'Auto (openrouter/free) — direkomendasikan, tahan rotasi' },
+-      { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B :free — VERIFIKASI DULU, sering dirotasi' },
++      { id: 'openrouter/free', label: 'Auto (openrouter/free) — pilihan terakhir, tahan rotasi' },
+     ],
+   },
+ };
+ 
+-const GEMINI_SAFETY_SETTINGS_FACTORY = (HarmCategory, HarmBlockThreshold) => [
+-  { category: HarmCategory.HARM_CATEGORY_HARASSMENT,        threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+-  { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,       threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+-  { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+-  { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+-];
+-
++// Safety settings Gemini — nilai string sesuai contoh resmi @google/genai.
++const GEMINI_SAFETY_SETTINGS = [
++  'HARM_CATEGORY_HARASSMENT',
++  'HARM_CATEGORY_HATE_SPEECH',
++  'HARM_CATEGORY_SEXUALLY_EXPLICIT',
++  'HARM_CATEGORY_DANGEROUS_CONTENT',
++].map((category) => ({ category, threshold: 'BLOCK_ONLY_HIGH' }));
++
++/*
++ * Antarmuka provider (tidak berubah): { id, type, generateReply(systemPrompt,
++ * history, userMessage, modelId, options?) }. `options.signal` (AbortSignal)
++ * adalah tambahan opsional — dipakai router untuk membatalkan percobaan yang
++ * melewati batas waktu.
++ */
+ function createGeminiProvider({ id, apiKey }) {
+-  const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require('@google/generative-ai');
+-  const genAI = new GoogleGenerativeAI(apiKey);
+-  const safetySettings = GEMINI_SAFETY_SETTINGS_FACTORY(HarmCategory, HarmBlockThreshold);
++  const { GoogleGenAI } = require('@google/genai');
++  const ai = new GoogleGenAI({ apiKey });
+ 
+   return {
+     id, type: 'gemini',
+-    // modelId sekarang parameter per-panggilan — memungkinkan fallback di
+-    // tingkat model, bukan cuma tingkat provider.
+-    async generateReply(systemPrompt, history, userMessage, modelId) {
+-      const generativeModel = genAI.getGenerativeModel({
+-        model: modelId, systemInstruction: systemPrompt, safetySettings,
++    async generateReply(systemPrompt, history, userMessage, modelId, { signal } = {}) {
++      const contents = [
++        ...history.map((h) => ({
++          role: h.role === 'assistant' ? 'model' : 'user',
++          parts: [{ text: h.content }],
++        })),
++        { role: 'user', parts: [{ text: userMessage }] },
++      ];
++      const response = await ai.models.generateContent({
++        model: modelId,
++        contents,
++        config: {
++          systemInstruction: systemPrompt,
++          safetySettings: GEMINI_SAFETY_SETTINGS,
++          ...(signal ? { abortSignal: signal } : {}),
++        },
+       });
+-      const contents = history.map((h) => ({
+-        role: h.role === 'assistant' ? 'model' : 'user',
+-        parts: [{ text: h.content }],
+-      }));
+-      const chat   = generativeModel.startChat({ history: contents });
+-      const result = await chat.sendMessage(userMessage);
+-      const text   = result.response.text();
++      const text = response.text;
+       if (!text?.trim()) throw new Error('Gemini returned an empty response.');
+       return text.trim();
+     },
+@@ -467,17 +453,21 @@
+ 
+ function createGroqProvider({ id, apiKey }) {
+   const Groq = require('groq-sdk');
+-  const client = new Groq({ apiKey });
++  // maxRetries: 0 — percobaan ulang ditangani router (fallback), bukan SDK.
++  const client = new Groq({ apiKey, maxRetries: 0 });
+ 
+   return {
+     id, type: 'groq',
+-    async generateReply(systemPrompt, history, userMessage, modelId) {
++    async generateReply(systemPrompt, history, userMessage, modelId, { signal } = {}) {
+       const messages = [
+         { role: 'system', content: systemPrompt },
+         ...history.map((h) => ({ role: h.role, content: h.content })),
+         { role: 'user', content: userMessage },
+       ];
+-      const completion = await client.chat.completions.create({ model: modelId, messages, temperature: 0.8, max_tokens: 800 });
++      const completion = await client.chat.completions.create(
++        { model: modelId, messages, temperature: 0.8, max_tokens: 800 },
++        signal ? { signal } : undefined,
++      );
+       const text = completion.choices?.[0]?.message?.content;
+       if (!text?.trim()) throw new Error('Groq returned an empty response.');
+       return text.trim();
+@@ -489,6 +479,7 @@
+   const OpenAI = require('openai');
+   const client = new OpenAI({
+     apiKey,
++    maxRetries: 0, // percobaan ulang ditangani router (fallback), bukan SDK
+     baseURL: 'https://openrouter.ai/api/v1',
+     defaultHeaders: {
+       ...(siteUrl ? { 'HTTP-Referer': siteUrl } : {}),
+@@ -498,13 +489,16 @@
+ 
+   return {
+     id, type: 'openrouter',
+-    async generateReply(systemPrompt, history, userMessage, modelId) {
++    async generateReply(systemPrompt, history, userMessage, modelId, { signal } = {}) {
+       const messages = [
+         { role: 'system', content: systemPrompt },
+         ...history.map((h) => ({ role: h.role, content: h.content })),
+         { role: 'user', content: userMessage },
+       ];
+-      const completion = await client.chat.completions.create({ model: modelId, messages, temperature: 0.8, max_tokens: 800 });
++      const completion = await client.chat.completions.create(
++        { model: modelId, messages, temperature: 0.8, max_tokens: 800 },
++        signal ? { signal } : undefined,
++      );
+       const text = completion.choices?.[0]?.message?.content;
+       if (!text?.trim()) throw new Error('OpenRouter returned an empty response.');
+       return text.trim();
+@@ -550,13 +544,22 @@
+  *      pertama", TANPA mematikan sisa fallback chain (model lain di provider
+  *      yang sama, lalu provider lain, tetap dicoba kalau Attempt #1 gagal).
+  *
+- * Kalau tidak ada override (activeSelection null): perilaku persis seperti
+- * sebelumnya — provider di-shuffle untuk load balancing antar API key, tiap
+- * provider mencoba model-nya sesuai urutan default di PROVIDER_MODEL_TIERS.
++ * Kalau tidak ada override (activeSelection null): provider SELAIN OpenRouter
++ * di-shuffle untuk load balancing antar API key (mis. gemini-1, gemini-2, groq-1
++ * — kalau satu gagal, sisanya tetap dicoba dalam urutan acak). OpenRouter selalu
++ * di belakang. Tiap provider mencoba model-nya sesuai urutan di
++ * PROVIDER_MODEL_TIERS.
+  */
++// Provider yang selalu dicoba paling akhir (di belakang provider lain), kecuali
++// dipilih eksplisit lewat /model set.
++const LAST_RESORT_PROVIDER_TYPES = new Set(['openrouter']);
++
+ function buildProviderModelPlan(providers, activeSelection) {
+   const plan = [];
+-  const orderedProviders = shuffle(providers);
++  const orderedProviders = [
++    ...shuffle(providers.filter((p) => !LAST_RESORT_PROVIDER_TYPES.has(p.type))),
++    ...providers.filter((p) => LAST_RESORT_PROVIDER_TYPES.has(p.type)),
++  ];
+ 
+   if (activeSelection?.activeProviderType) {
+     const idx = orderedProviders.findIndex((p) => p.type === activeSelection.activeProviderType);
+@@ -594,24 +597,70 @@
+   return plan;
+ }
+ 
+-async function generateWithFallback(plan, systemPrompt, history, userMessage, onAttempt) {
++// Batas waktu fallback (ms), bisa di-override lewat env.
++//  - AI_ATTEMPT_TIMEOUT_MS : batas satu percobaan (provider/model)
++//  - AI_TOTAL_TIMEOUT_MS   : batas total seluruh rantai fallback per pesan
++const AI_ATTEMPT_TIMEOUT_MS = Math.max(1000, Number(process.env.AI_ATTEMPT_TIMEOUT_MS) || 20000);
++const AI_TOTAL_TIMEOUT_MS   = Math.max(AI_ATTEMPT_TIMEOUT_MS, Number(process.env.AI_TOTAL_TIMEOUT_MS) || 60000);
++
++/**
++ * generateWithFallback — coba tiap (provider, model) di `plan` SEKALI, berurutan.
++ *
++ * Batas (tidak ada retry tanpa akhir):
++ *   - Tiap entri plan dicoba maksimal 1x; timeout, rate limit (429), maupun
++ *     error lain langsung lanjut ke entri berikutnya, tidak diulang.
++ *   - Tiap percobaan dibatasi attemptTimeoutMs dan dibatalkan lewat AbortSignal.
++ *   - Seluruh rantai dibatasi totalTimeoutMs.
++ *   - SDK Groq/OpenRouter dibuat dengan maxRetries: 0 supaya tidak ada retry
++ *     tersembunyi di dalamnya.
++ */
++async function generateWithFallback(plan, systemPrompt, history, userMessage, onAttempt, options = {}) {
++  const attemptTimeoutMs = options.attemptTimeoutMs ?? AI_ATTEMPT_TIMEOUT_MS;
++  const totalTimeoutMs   = options.totalTimeoutMs   ?? AI_TOTAL_TIMEOUT_MS;
++  const deadline = Date.now() + totalTimeoutMs;
+   const errors = [];
+ 
+   for (let i = 0; i < plan.length; i++) {
++    const remaining = deadline - Date.now();
++    if (remaining <= 0) {
++      errors.push({ providerId: '-', modelId: '-', error: new Error(`batas total ${totalTimeoutMs}ms tercapai sebelum percobaan #${i + 1}`) });
++      break;
++    }
++
+     const { provider, modelId } = plan[i];
++    const timeoutMs  = Math.min(attemptTimeoutMs, remaining);
++    const controller = new AbortController();
++    let timer;
++
+     try {
+       if (onAttempt) onAttempt({ providerId: provider.id, modelId, attempt: i + 1 });
+-      const text = await provider.generateReply(systemPrompt, history, userMessage, modelId);
++
++      const work = (async () => provider.generateReply(
++        systemPrompt, history, userMessage, modelId, { signal: controller.signal },
++      ))();
++      work.catch(() => {}); // cegah unhandledRejection kalau work gagal setelah timeout
++
++      const timeout = new Promise((_, reject) => {
++        timer = setTimeout(() => {
++          reject(new Error(`timeout setelah ${timeoutMs}ms`));
++          controller.abort();
++        }, timeoutMs);
++      });
++
++      const text = await Promise.race([work, timeout]);
+       return { text, providerId: provider.id, modelId };
+     } catch (error) {
+       errors.push({ providerId: provider.id, modelId, error });
+       if (onAttempt) onAttempt({ providerId: provider.id, modelId, attempt: i + 1, error });
+-      if (i === plan.length - 1) {
+-        throw new Error(`All AI provider/model combinations failed. Details: ${errors.map((e) => `${e.providerId}/${e.modelId}: ${e.error.message}`).join(' | ')}`);
+-      }
++    } finally {
++      clearTimeout(timer);
+     }
+   }
+-  throw new Error('No provider/model succeeded (empty plan — cek konfigurasi provider & PROVIDER_MODEL_TIERS).');
++
++  if (errors.length === 0) {
++    throw new Error('No provider/model succeeded (empty plan — cek konfigurasi provider & PROVIDER_MODEL_TIERS).');
++  }
++  throw new Error(`All AI provider/model combinations failed. Details: ${errors.map((e) => `${e.providerId}/${e.modelId}: ${e.error.message}`).join(' | ')}`);
+ }
+ 
+ /* =========================================================================
+@@ -626,6 +675,14 @@
+   return [...(tier.models || []), ...(tier.manualOnly || [])];
+ }
+ 
++// true kalau tidak ada override, atau override menunjuk model yang masih ada di
++// PROVIDER_MODEL_TIERS. Override lama yang modelnya sudah dibuang dari daftar
++// diabaikan oleh buildProviderModelPlan — fungsi ini dipakai untuk memberi tahu.
++function isKnownModelOverride(cfg) {
++  if (!cfg?.activeProviderType) return true;
++  return getAllTierModels(cfg.activeProviderType).some((m) => m.id === cfg.activeModelId);
++}
++
+ function buildCommandList() {
+   return [
+     new SlashCommandBuilder()
+@@ -763,7 +820,7 @@
+         if (cmd === 'model') {
+           // ── Owner-only gate: validasi ID manual, bukan lewat Discord permission ──
+           if (interaction.user.id !== OWNER_ID) {
+-            await interaction.reply({ content: '❌ Command ini khusus untuk owner bot.', ephemeral: true });
++            await interaction.reply({ content: '❌ Command ini khusus untuk owner bot.', flags: MessageFlags.Ephemeral });
+             return;
+           }
+ 
+@@ -771,7 +828,7 @@
+ 
+           if (sub === 'status') {
+             const current = modelConfig.activeProviderType
+-              ? `**${modelConfig.activeProviderType} / ${modelConfig.activeModelId}** (override manual, Attempt #1)`
++              ? `**${modelConfig.activeProviderType} / ${modelConfig.activeModelId}** (override manual, Attempt #1)${isKnownModelOverride(modelConfig) ? '' : '\n⚠️ Model ini tidak ada di daftar — override DIABAIKAN. Gunakan /model set atau /model reset.'}`
+               : 'Otomatis (tanpa override — urutan fallback default)';
+             const configuredProviders = providers.length > 0
+               ? providers.map((p) => p.id).join(', ')
+@@ -779,7 +836,7 @@
+ 
+             await interaction.reply({
+               content: `📊 Model aktif: ${current}\n🔌 Provider terkonfigurasi: ${configuredProviders}`,
+-              ephemeral: true,
++              flags: MessageFlags.Ephemeral,
+             });
+             return;
+           }
+@@ -788,7 +845,7 @@
+             modelConfig.activeProviderType = null;
+             modelConfig.activeModelId = null;
+             saveModelConfig();
+-            await interaction.reply({ content: '✅ Override dihapus — kembali ke urutan fallback otomatis.', ephemeral: true });
++            await interaction.reply({ content: '✅ Override dihapus — kembali ke urutan fallback otomatis.', flags: MessageFlags.Ephemeral });
+             return;
+           }
+ 
+@@ -800,7 +857,7 @@
+             if (!providerConfigured) {
+               await interaction.reply({
+                 content: `❌ Provider **${providerType}** belum terkonfigurasi (API key tidak ditemukan di Environment Variables).`,
+-                ephemeral: true,
++                flags: MessageFlags.Ephemeral,
+               });
+               return;
+             }
+@@ -809,7 +866,7 @@
+             if (!validModel) {
+               await interaction.reply({
+                 content: `❌ Model \`${modelId}\` tidak ada di daftar untuk provider **${providerType}**. Gunakan autocomplete supaya tidak salah ketik.`,
+-                ephemeral: true,
++                flags: MessageFlags.Ephemeral,
+               });
+               return;
+             }
+@@ -820,7 +877,7 @@
+ 
+             await interaction.reply({
+               content: `✅ Model aktif diset ke **${providerType} / ${modelId}** sebagai Attempt #1.\nFallback chain tetap aktif — kalau model ini gagal/deprecated, bot otomatis lanjut ke model/provider lain.`,
+-              ephemeral: true,
++              flags: MessageFlags.Ephemeral,
+             });
+             return;
+           }
+@@ -835,14 +892,14 @@
+             conversations.clear(interaction.channelId, interaction.user.id);
+             await interaction.reply({
+               content: '✅ Riwayat percakapan AI kamu di channel ini sudah direset.',
+-              ephemeral: true,
++              flags: MessageFlags.Ephemeral,
+             });
+             return;
+           }
+ 
+           // "channel" dan "all" wajib owner — bisa menghapus riwayat orang lain.
+           if (interaction.user.id !== OWNER_ID) {
+-            await interaction.reply({ content: '❌ Subcommand ini khusus untuk owner bot.', ephemeral: true });
++            await interaction.reply({ content: '❌ Subcommand ini khusus untuk owner bot.', flags: MessageFlags.Ephemeral });
+             return;
+           }
+ 
+@@ -850,7 +907,7 @@
+             const removed = conversations.clearChannel(interaction.channelId);
+             await interaction.reply({
+               content: `✅ Riwayat ${removed} user di channel ini sudah direset.`,
+-              ephemeral: true,
++              flags: MessageFlags.Ephemeral,
+             });
+             return;
+           }
+@@ -859,7 +916,7 @@
+             const removed = conversations.resetAll();
+             await interaction.reply({
+               content: `✅ SELURUH riwayat percakapan AI direset (${removed} entri di semua channel/user).`,
+-              ephemeral: true,
++              flags: MessageFlags.Ephemeral,
+             });
+             return;
+           }
+@@ -868,7 +925,7 @@
+         if (cmd === 'echo') {
+           const text = interaction.options.getString('text');
+           await interaction.channel.send(text);
+-          await interaction.reply({ content: 'Message sent!', ephemeral: true });
++          await interaction.reply({ content: 'Message sent!', flags: MessageFlags.Ephemeral });
+           return;
+         }
+ 
+@@ -882,7 +939,7 @@
+ 
+           await interaction.reply({
+             content: `✅ Welcome channel set to <#${channel.id}>.`,
+-            ephemeral: true,
++            flags: MessageFlags.Ephemeral,
+           });
+           return;
+         }
+@@ -892,30 +949,30 @@
+           // tidak ada penulisan ke cache; interaction.member sudah tersedia
+           // langsung dari payload interaksi (GuildMemberManager tetap 0).
+           if (!interaction.inGuild() || !interaction.member) {
+-            await interaction.reply({ content: '❌ Command ini hanya bisa dipakai di dalam server.', ephemeral: true });
++            await interaction.reply({ content: '❌ Command ini hanya bisa dipakai di dalam server.', flags: MessageFlags.Ephemeral });
+             return;
+           }
+ 
+           const cfg = welcomeConfig.welcome;
+           if (!cfg.channelId) {
+-            await interaction.reply({ content: '❌ No welcome channel set yet.', ephemeral: true });
++            await interaction.reply({ content: '❌ No welcome channel set yet.', flags: MessageFlags.Ephemeral });
+             return;
+           }
+           const channel = interaction.guild.channels.cache.get(cfg.channelId);
+           if (!channel) {
+-            await interaction.reply({ content: '❌ Configured channel not found.', ephemeral: true });
++            await interaction.reply({ content: '❌ Configured channel not found.', flags: MessageFlags.Ephemeral });
+             return;
+           }
+           const msg = formatWelcomeMessage(cfg.message, interaction.member);
+           await channel.send(msg);
+-          await interaction.reply({ content: `✅ Test welcome sent to <#${channel.id}>.`, ephemeral: true });
++          await interaction.reply({ content: `✅ Test welcome sent to <#${channel.id}>.`, flags: MessageFlags.Ephemeral });
+           return;
+         }
+ 
+         if (cmd === 'create') {
+           const trigger = interaction.options.getString('trigger').trim().toLowerCase();
+           if (responders[trigger] !== undefined) {
+-            await interaction.reply({ content: `⚠️ Trigger \`${trigger}\` already exists.`, ephemeral: true });
++            await interaction.reply({ content: `⚠️ Trigger \`${trigger}\` already exists.`, flags: MessageFlags.Ephemeral });
+             return;
+           }
+ 
+@@ -940,7 +997,7 @@
+         if (cmd === 'edit') {
+           const trigger = interaction.options.getString('trigger').trim().toLowerCase();
+           if (responders[trigger] === undefined) {
+-            await interaction.reply({ content: `❌ Trigger \`${trigger}\` does not exist.`, ephemeral: true });
++            await interaction.reply({ content: `❌ Trigger \`${trigger}\` does not exist.`, flags: MessageFlags.Ephemeral });
+             return;
+           }
+ 
+@@ -966,7 +1023,7 @@
+         if (cmd === 'list') {
+           const triggers = Object.keys(responders);
+           if (triggers.length === 0) {
+-            await interaction.reply({ content: '📜 No custom responders configured.', ephemeral: true });
++            await interaction.reply({ content: '📜 No custom responders configured.', flags: MessageFlags.Ephemeral });
+             return;
+           }
+ 
+@@ -975,20 +1032,20 @@
+             .setColor(0x5865F2)
+             .setDescription(triggers.map(t => `• \`Ovelia ${t}\``).join('\n'));
+ 
+-          await interaction.reply({ embeds: [embed], ephemeral: true });
++          await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+           return;
+         }
+ 
+         if (cmd === 'delete') {
+           const trigger = interaction.options.getString('trigger').trim().toLowerCase();
+           if (responders[trigger] === undefined) {
+-            await interaction.reply({ content: `❌ Trigger \`${trigger}\` does not exist.`, ephemeral: true });
++            await interaction.reply({ content: `❌ Trigger \`${trigger}\` does not exist.`, flags: MessageFlags.Ephemeral });
+             return;
+           }
+ 
+           delete responders[trigger];
+           saveResponders();
+-          await interaction.reply({ content: `✅ Removed auto-responder for \`${trigger}\`.`, ephemeral: true });
++          await interaction.reply({ content: `✅ Removed auto-responder for \`${trigger}\`.`, flags: MessageFlags.Ephemeral });
+           return;
+         }
+ 
+@@ -999,7 +1056,7 @@
+           blocklist[targetUser.id] = { blockedAt: new Date().toISOString(), reason };
+           saveBlocklist();
+ 
+-          await interaction.reply({ content: `🚫 User <@${targetUser.id}> blocked. Reason: ${reason}`, ephemeral: true });
++          await interaction.reply({ content: `🚫 User <@${targetUser.id}> blocked. Reason: ${reason}`, flags: MessageFlags.Ephemeral });
+           return;
+         }
+ 
+@@ -1008,14 +1065,14 @@
+           if (!blocklist[targetUser.id]) {
+             // FIX: sebelumnya body if ini kosong sehingga request tetap lanjut
+             // ke reply "berhasil di-unblock" walau user memang belum diblokir.
+-            await interaction.reply({ content: `⚠️ User <@${targetUser.id}> is not blocked.`, ephemeral: true });
++            await interaction.reply({ content: `⚠️ User <@${targetUser.id}> is not blocked.`, flags: MessageFlags.Ephemeral });
+             return;
+           }
+ 
+           delete blocklist[targetUser.id];
+           saveBlocklist();
+ 
+-          await interaction.reply({ content: `✅ User <@${targetUser.id}> unblocked.`, ephemeral: true });
++          await interaction.reply({ content: `✅ User <@${targetUser.id}> unblocked.`, flags: MessageFlags.Ephemeral });
+           return;
+         }
+       }
+@@ -1030,7 +1087,7 @@
+ 
+           await interaction.reply({
+             content: `✅ Custom responder for \`${trigger}\` has been ${action === 'create' ? 'created' : 'updated'}!`,
+-            ephemeral: true,
++            flags: MessageFlags.Ephemeral,
+           });
+         }
+       }
+@@ -1039,7 +1096,7 @@
+       // Autocomplete tidak mendukung .reply() — cuma .respond(). Kalau error
+       // terjadi di jalur autocomplete, cukup log saja, jangan coba reply.
+       if (!interaction.isAutocomplete() && !interaction.replied && !interaction.deferred) {
+-        await interaction.reply({ content: '❌ An error occurred processing this interaction.', ephemeral: true }).catch(() => {});
++        await interaction.reply({ content: '❌ An error occurred processing this interaction.', flags: MessageFlags.Ephemeral }).catch(() => {});
+       }
+     }
+   });
+@@ -1191,7 +1248,7 @@
+           plan, callSystemPrompt,
+           conversations.get(message.channel.id, message.author.id), userMessage,
+           ({ providerId: pid, modelId: mid, attempt, error }) => {
+-            if (error) console.warn(`[AI] Attempt #${attempt} via "${pid}/${mid}" failed: ${error.message}`);
++            if (error) console.warn(`[AI] Attempt #${attempt} via "${pid}/${mid}" failed${error.status ? ` [HTTP ${error.status}]` : ''}: ${error.message}`);
+             else       console.log(`[AI] Attempt #${attempt} using "${pid}/${mid}"`);
+           }
+         );
+@@ -1228,8 +1285,8 @@
+  *   Intent GuildMembers TETAP ada sehingga event guildMemberAdd tetap jalan;
+  *   yang dimatikan hanya cache-nya (yang tadinya menyimpan seluruh member
+  *   dari seluruh guild ke memori tanpa perlu).
+- * - Tidak ada express / server HTTP — DisCloud bot-type tidak butuh port
+- *   terbuka untuk health-check. Kalau kamu memang butuh endpoint uptime
++ * - Tidak ada express / server HTTP — bot ini proses long-lived (bukan
++ *   serverless) dan tidak butuh port terbuka. Kalau kamu memang butuh endpoint uptime
+  *   monitor eksternal, beri tahu saya, saya tambahkan native http (~10 baris,
+  *   jauh lebih ringan dari express).
+  * ========================================================================= */
+@@ -1267,13 +1324,17 @@
+     },
+   });
+ 
++  if (!isKnownModelOverride(modelConfig)) {
++    console.warn(`[Model] model_config.json menunjuk ke "${modelConfig.activeProviderType}/${modelConfig.activeModelId}" yang tidak ada di PROVIDER_MODEL_TIERS — override diabaikan. Jalankan /model set atau /model reset.`);
++  }
++
+   registerInteractionHandler(client, providers);
+   registerMessageHandler(client, providers, {
+     prefix:       process.env.COMMAND_PREFIX || '!tanya',
+     systemPrompt: process.env.SYSTEM_PROMPT  || process.env.Personality,
+   });
+ 
+-  client.once('ready', async () => {
++  client.once(Events.ClientReady, async () => {
+     console.log(`🤖 Logged in as ${client.user.tag}!`);
+     startActivityRotation(client, welcomeConfig.activity);
+ 
+@@ -1305,7 +1366,16 @@
+   await client.login(token);
+ }
+ 
+-main().catch((err) => {
+-  console.error('❌ Failed to start bot:', err);
+-  process.exit(1);
+-});
++// BOT_NO_AUTOSTART=1 dipakai test supaya file ini bisa di-require tanpa login.
++if (!process.env.BOT_NO_AUTOSTART) {
++  main().catch((err) => {
++    console.error('❌ Failed to start bot:', err);
++    process.exit(1);
++  });
++}
++
++module.exports = {
++  PROVIDER_MODEL_TIERS, buildProviderModelPlan, generateWithFallback,
++  createGeminiProvider, createGroqProvider, createOpenRouterProvider,
++  buildProviderRegistry, isKnownModelOverride, main,
++};
+--- ../dc/package.json	2026-10-17 23:25:36.000000000 +0000
++++ package.json	2026-10-17 17:14:04.215342188 +0000
+@@ -1,21 +1,22 @@
+ {
+   "name": "discord-ai-bot",
+-  "version": "1.0.0",
++  "version": "1.1.0",
+   "description": "Discord bot dengan multi-provider AI load balancer & fallback (Gemini, Groq, OpenRouter)",
+   "main": "index.js",
+   "type": "commonjs",
+   "scripts": {
+     "start": "node index.js",
+-    "dev": "node --watch index.js"
++    "dev": "node --watch index.js",
++    "test": "node --test"
+   },
+   "dependencies": {
+-    "@google/generative-ai": "^0.21.0",
++    "@google/genai": "^1.37.0",
+     "discord.js": "^14.16.3",
+     "dotenv": "^16.4.5",
+     "groq-sdk": "^0.9.1",
+     "openai": "^4.73.0"
+   },
+   "engines": {
+-    "node": ">=18.0.0"
++    "node": ">=20.0.0"
+   }
+ }
