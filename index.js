@@ -8,7 +8,7 @@ const {
   Client, GatewayIntentBits, Partials, Options,
   REST, Routes, SlashCommandBuilder,
   ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder,
-  EmbedBuilder, PermissionFlagsBits, ActivityType, MessageFlags,
+  EmbedBuilder, PermissionFlagsBits, ActivityType, MessageFlags, Events,
 } = require('discord.js');
 
 /* =========================================================================
@@ -397,11 +397,12 @@ const PROVIDER_MODEL_TIERS = {
   },
   openrouter: {
     label: 'OpenRouter',
-    // Katalog ":free" OpenRouter berputar cepat — itulah kenapa auto-router
-    // openrouter/free diprioritaskan.
+    // Katalog ":free" OpenRouter berputar cepat — itulah kenapa hanya auto-router
+    // openrouter/free yang dipakai. meta-llama/llama-3.3-70b-instruct:free dibuang:
+    // API membalas HTTP 404 (versi gratis sudah tidak ada) pada 18 Okt 2026.
+    // OpenRouter dipakai sebagai pilihan TERAKHIR (lihat LAST_RESORT_PROVIDER_TYPES).
     models: [
-      { id: 'openrouter/free', label: 'Auto (openrouter/free) — direkomendasikan, tahan rotasi' },
-      { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B :free — VERIFIKASI DULU, sering dirotasi' },
+      { id: 'openrouter/free', label: 'Auto (openrouter/free) — pilihan terakhir, tahan rotasi' },
     ],
   },
 };
@@ -543,13 +544,22 @@ function shuffle(arr) {
  *      pertama", TANPA mematikan sisa fallback chain (model lain di provider
  *      yang sama, lalu provider lain, tetap dicoba kalau Attempt #1 gagal).
  *
- * Kalau tidak ada override (activeSelection null): perilaku persis seperti
- * sebelumnya — provider di-shuffle untuk load balancing antar API key, tiap
- * provider mencoba model-nya sesuai urutan default di PROVIDER_MODEL_TIERS.
+ * Kalau tidak ada override (activeSelection null): provider SELAIN OpenRouter
+ * di-shuffle untuk load balancing antar API key (mis. gemini-1, gemini-2, groq-1
+ * — kalau satu gagal, sisanya tetap dicoba dalam urutan acak). OpenRouter selalu
+ * di belakang. Tiap provider mencoba model-nya sesuai urutan di
+ * PROVIDER_MODEL_TIERS.
  */
+// Provider yang selalu dicoba paling akhir (di belakang provider lain), kecuali
+// dipilih eksplisit lewat /model set.
+const LAST_RESORT_PROVIDER_TYPES = new Set(['openrouter']);
+
 function buildProviderModelPlan(providers, activeSelection) {
   const plan = [];
-  const orderedProviders = shuffle(providers);
+  const orderedProviders = [
+    ...shuffle(providers.filter((p) => !LAST_RESORT_PROVIDER_TYPES.has(p.type))),
+    ...providers.filter((p) => LAST_RESORT_PROVIDER_TYPES.has(p.type)),
+  ];
 
   if (activeSelection?.activeProviderType) {
     const idx = orderedProviders.findIndex((p) => p.type === activeSelection.activeProviderType);
@@ -1324,7 +1334,7 @@ async function main() {
     systemPrompt: process.env.SYSTEM_PROMPT  || process.env.Personality,
   });
 
-  client.once('ready', async () => {
+  client.once(Events.ClientReady, async () => {
     console.log(`🤖 Logged in as ${client.user.tag}!`);
     startActivityRotation(client, welcomeConfig.activity);
 

@@ -25,7 +25,7 @@ let groqBehavior   = async () => ({ choices: [{ message: { content: 'groq-ok' } 
 let openaiBehavior = async () => ({ choices: [{ message: { content: 'or-ok' } }] });
 
 class StubGoogleGenAI {
-  constructor(o) { rec.geminiCtor.push(o); this.models = { generateContent: (req) => { rec.gemini.push(req); return geminiBehavior(req); } }; }
+  constructor(o) { rec.geminiCtor.push(o); this.models = { generateContent: (req) => { rec.gemini.push(req); return geminiBehavior(req, o.apiKey); } }; }
 }
 class StubGroq {
   constructor(o) { rec.groqCtor.push(o); this.chat = { completions: { create: (body, opts) => { rec.groq.push({ body, opts }); return groqBehavior(body, opts); } } }; }
@@ -64,6 +64,7 @@ const discordStub = {
   PermissionFlagsBits: { ManageGuild: 32n },
   ActivityType: { Playing: 0, Streaming: 1, Listening: 2, Watching: 3, Competing: 5 },
   MessageFlags: { Ephemeral: 64 },
+  Events: { ClientReady: 'clientReady' },
 };
 const stubs = { '@google/genai': { GoogleGenAI: StubGoogleGenAI }, 'groq-sdk': StubGroq, openai: StubOpenAI, dotenv: { config() {} }, 'discord.js': discordStub };
 const origLoad = Module._load;
@@ -92,7 +93,7 @@ test('daftar model: gemini auto = 3.6-flash + 3.5-flash-lite; 3.8-flash & 3.1-fl
 });
 test('daftar model: slug deprecated tidak ada lagi', () => {
   const all = Object.values(TIERS).flatMap((t) => ids([...(t.models || []), ...(t.manualOnly || [])]));
-  for (const dead of ['gemini-3.5-flash', 'gemini-3.7-flash', 'llama-3.1-8b-instant', 'moonshotai/kimi-k2-instruct']) {
+  for (const dead of ['gemini-3.5-flash', 'gemini-3.7-flash', 'llama-3.1-8b-instant', 'moonshotai/kimi-k2-instruct', 'meta-llama/llama-3.3-70b-instruct:free']) {
     assert.ok(!all.includes(dead), `${dead} masih ada`);
   }
   assert.ok(!all.some((id) => id.startsWith('gemini-2')), 'masih ada lini gemini-2.x');
@@ -123,6 +124,25 @@ test('plan: override ke provider lain tidak memunculkan model manualOnly gemini'
   assert.equal(plan[0].provider.id, 'groq-1');
   assert.equal(plan[0].modelId, 'qwen/qwen3.8-27b');
   assert.ok(!plan.some((x) => TIERS.gemini.manualOnly.some((m) => m.id === x.modelId)));
+});
+test('plan default: OpenRouter SELALU terakhir; provider lain tetap diacak (100x)', () => {
+  const firsts = new Set();
+  for (let i = 0; i < 100; i++) {
+    const plan = buildProviderModelPlan(fakeProviders, { activeProviderType: null, activeModelId: null });
+    const lastNonOr = plan.map((x) => x.provider.type).lastIndexOf('groq') > plan.map((x) => x.provider.type).lastIndexOf('gemini')
+      ? plan.map((x) => x.provider.type).lastIndexOf('groq') : plan.map((x) => x.provider.type).lastIndexOf('gemini');
+    const firstOr = plan.findIndex((x) => x.provider.type === 'openrouter');
+    assert.ok(firstOr > lastNonOr, 'OpenRouter muncul sebelum provider lain');
+    assert.notEqual(plan[0].provider.type, 'openrouter');
+    firsts.add(plan[0].provider.id);
+  }
+  assert.deepEqual([...firsts].sort(), ['gemini-1', 'groq-1'], 'provider non-OpenRouter harus tetap bergantian di posisi pertama');
+});
+test('plan: OpenRouter tetap bisa jadi Attempt #1 kalau dipilih eksplisit lewat /model set', () => {
+  const plan = buildProviderModelPlan(fakeProviders, { activeProviderType: 'openrouter', activeModelId: 'openrouter/free' });
+  assert.equal(plan[0].provider.id, 'openrouter-1');
+  assert.equal(plan[0].modelId, 'openrouter/free');
+  assert.ok(plan.some((x) => x.provider.type === 'gemini') && plan.some((x) => x.provider.type === 'groq'));
 });
 test('plan: override lama yang modelnya sudah dibuang diabaikan (tidak ada model mati di plan)', () => {
   const cfg = { activeProviderType: 'groq', activeModelId: 'llama-3.1-8b-instant' };
@@ -251,6 +271,44 @@ test('registry: nama env baru dan lama (legacy) sama-sama terbaca', () => {
   assert.deepEqual(b.map((p) => p.id), a.map((p) => p.id));
 });
 
+/* ================= 4b. key Gemini-1 rusak -> fallback ke Gemini-2 ================= */
+function withBehaviors(fn) {
+  const saved = [geminiBehavior, groqBehavior, openaiBehavior];
+  return async () => { try { await fn(); } finally { [geminiBehavior, groqBehavior, openaiBehavior] = saved; } };
+}
+const badKeyError = () => Object.assign(new Error('400 API key not valid. Please pass a valid API key.'), { status: 400 });
+
+test('gemini-1 rusak + gemini-2 sehat + groq + openrouter: selalu terjawab, tidak pernah oleh gemini-1/OpenRouter, gemini-2 benar-benar terpakai', withBehaviors(async () => {
+  geminiBehavior = async (_req, key) => { if (key === 'BAD') throw badKeyError(); return { text: 'dari-gemini-2' }; };
+  groqBehavior = async () => ({ choices: [{ message: { content: 'dari-groq' } }] });
+  openaiBehavior = async () => ({ choices: [{ message: { content: 'dari-openrouter' } }] });
+  const providers = bot.buildProviderRegistry({ GEMINI_KEY_1: 'BAD', GEMINI_KEY_2: 'GOOD', GROQ_KEY: 'g', OPENROUTER_KEY: 'o' });
+  assert.deepEqual(providers.map((p) => p.id), ['gemini-1', 'gemini-2', 'groq-1', 'openrouter-1']);
+  const answered = new Map();
+  for (let i = 0; i < 60; i++) {
+    const plan = buildProviderModelPlan(providers, { activeProviderType: null, activeModelId: null });
+    const r = await generateWithFallback(plan, 'S', [], 'u');
+    answered.set(r.providerId, (answered.get(r.providerId) || 0) + 1);
+  }
+  assert.ok(!answered.has('gemini-1'), 'gemini-1 (key rusak) tidak mungkin menjawab');
+  assert.ok(!answered.has('openrouter-1'), 'OpenRouter tidak boleh terpakai selama provider lain sehat');
+  assert.ok(answered.get('gemini-2') > 0, 'gemini-2 harus ikut menjawab');
+  assert.ok(answered.get('groq-1') > 0);
+}));
+test('hanya gemini-1 (rusak) + gemini-2 (sehat): SELALU berakhir di gemini-2, dan tiap model gemini-1 dicoba tepat 1x', withBehaviors(async () => {
+  const keysSeen = [];
+  geminiBehavior = async (_req, key) => { keysSeen.push(key); if (key === 'BAD') throw badKeyError(); return { text: 'dari-gemini-2' }; };
+  const providers = bot.buildProviderRegistry({ GEMINI_KEY_1: 'BAD', GEMINI_KEY_2: 'GOOD' });
+  for (let i = 0; i < 20; i++) {
+    keysSeen.length = 0;
+    const plan = buildProviderModelPlan(providers, { activeProviderType: null, activeModelId: null });
+    const r = await generateWithFallback(plan, 'S', [], 'u');
+    assert.equal(r.providerId, 'gemini-2');
+    assert.equal(keysSeen.filter((k) => k === 'BAD').length <= TIERS.gemini.models.length, true);
+    assert.equal(keysSeen.filter((k) => k === 'GOOD').length >= 1, true);
+  }
+}));
+
 /* ================= 5. smoke: main() + alur pesan (discord.js di-stub) ================= */
 const fakeMessage = (content, uid, replies) => ({
   author: { id: uid, bot: false }, content, guildId: 'G1', reference: null,
@@ -272,7 +330,9 @@ test('smoke: main() login, wiring event, registrasi 11 slash command', async () 
   const c = rec.clients[0];
   assert.equal(c.token, 'TOK');
   for (const ev of ['interactionCreate', 'messageCreate', 'guildMemberAdd', 'error']) assert.equal(typeof c.handlers[ev], 'function', ev);
-  await c.once_.ready();
+  assert.equal(typeof c.once_[discordStub.Events.ClientReady], 'function');
+  assert.equal(c.once_.ready, undefined, 'tidak boleh lagi memakai event \'ready\' yang deprecated');
+  await c.once_[discordStub.Events.ClientReady]();
   assert.equal(rec.restPut[0].length, 11);
 });
 test('smoke: pesan -> balasan AI via Groq (tanpa model mati; override lama diabaikan)', async () => {
@@ -323,6 +383,8 @@ test('statis: tidak ada "ephemeral:" lama, tidak ada SDK Gemini lama', () => {
   const src = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
   assert.ok(!/ephemeral:\s*true/.test(src));
   assert.ok(!src.includes('@google/generative-ai'));
+  assert.ok(!/\.once\('ready'/.test(src), "masih memakai event 'ready'");
+  assert.ok(src.includes('Events.ClientReady'));
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
   assert.ok(pkg.dependencies['@google/genai']);
   assert.ok(!pkg.dependencies['@google/generative-ai']);
