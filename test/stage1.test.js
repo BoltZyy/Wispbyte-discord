@@ -359,6 +359,17 @@ test('smoke: main() login, wiring event, registrasi 11 slash command', async () 
   if (process.env.UPDATE_GOLDEN === '1') { fs.mkdirSync(path.dirname(goldenPath), { recursive: true }); fs.writeFileSync(goldenPath, actual); }
   assert.equal(actual, fs.readFileSync(goldenPath, 'utf8'), 'definisi slash command berubah dari golden');
 });
+async function captureStartupLogs() {
+  const out = []; const l = console.log, w = console.warn;
+  console.log = (...a) => out.push(a.join(' ')); console.warn = (...a) => out.push(a.join(' '));
+  try { await bot.main(); } finally { console.log = l; console.warn = w; }
+  return out;
+}
+test('smoke: startup memperingatkan override lama yang modelnya sudah dibuang (tanpa log "aktif")', async () => {
+  const logs = (await captureStartupLogs()).join('\n');
+  assert.match(logs, /llama-3\.1-8b-instant.*override diabaikan/);
+  assert.ok(!/Override manual aktif/.test(logs));
+});
 test('smoke: pesan -> balasan AI via Groq (tanpa model mati; override lama diabaikan)', async () => {
   const c = rec.clients[0]; const replies = []; rec.groq.length = 0; rec.gemini.length = 0;
   geminiBehavior = async () => { throw new Error('gemini down'); };
@@ -384,6 +395,11 @@ test('smoke: /model set gemini-3.8-flash -> Attempt #1, gagal -> fallback tetap 
   await c.handlers.messageCreate(fakeMessage('<@BOT> tes', 'U2', replies));
   assert.deepEqual(rec.gemini.map((x) => x.model), ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite']);
   assert.deepEqual(replies, ['fallback groq']);
+});
+test('smoke: startup mencatat override manual yang sah (gemini-3.8-flash)', async () => {
+  const logs = (await captureStartupLogs()).join('\n');
+  assert.match(logs, /Override manual aktif: gemini\/gemini-3\.8-flash/);
+  assert.ok(!/override diabaikan/.test(logs));
 });
 test('smoke: setelah /model reset, model manualOnly tidak pernah dicoba otomatis', async () => {
   const c = rec.clients[0]; const replies = [];
@@ -473,4 +489,11 @@ test('modul: SDK provider tetap lazy (tidak di-require saat modul dimuat, baru s
   const before = requestLog.length;
   bot.createGroqProvider({ id: 'lazy', apiKey: 'k' });
   assert.ok(requestLog.slice(before).includes('groq-sdk'));
+});
+
+test('smoke: startup tanpa override tidak mencetak baris override apa pun', async () => {
+  const c = rec.clients[0]; const replies = [];
+  await c.handlers.interactionCreate(fakeInteraction('reset', () => null, replies));
+  const logs = (await captureStartupLogs()).join('\n');
+  assert.ok(!/\[Model\]/.test(logs), logs);
 });

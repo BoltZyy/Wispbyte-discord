@@ -62,6 +62,8 @@ async function main() {
 
   if (!isKnownModelOverride(modelConfig)) {
     console.warn(`[Model] model_config.json menunjuk ke "${modelConfig.activeProviderType}/${modelConfig.activeModelId}" yang tidak ada di PROVIDER_MODEL_TIERS — override diabaikan. Jalankan /model set atau /model reset.`);
+  } else if (modelConfig.activeProviderType) {
+    console.log(`[Model] Override manual aktif: ${modelConfig.activeProviderType}/${modelConfig.activeModelId} (Attempt #1). Jalankan /model reset untuk kembali ke urutan otomatis.`);
   }
 
   registerInteractionHandler(client, providers);
