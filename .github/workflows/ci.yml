@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tes (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22, 24]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: ${{ matrix.node-version }}
+      # Tes tidak butuh npm install maupun jaringan: SDK dan discord.js di-stub.
+      - run: npm test
+
+  real-deps:
+    name: Smoke paket asli (Node 22)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      # Memuat modul dengan discord.js, @google/genai, groq-sdk, openai ASLI.
+      # Tanpa login Discord dan tanpa request jaringan.
+      - run: npm run smoke
