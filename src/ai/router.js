@@ -81,6 +81,21 @@ const AI_ATTEMPT_TIMEOUT_MS = Math.max(1000, Number(process.env.AI_ATTEMPT_TIMEO
 const AI_TOTAL_TIMEOUT_MS   = Math.max(AI_ATTEMPT_TIMEOUT_MS, Number(process.env.AI_TOTAL_TIMEOUT_MS) || 60000);
 
 /**
+ * isKeyError — true kalau error menandakan API key provider bermasalah
+ * (key salah/kedaluwarsa/dicabut), bukan masalah satu model atau permintaan.
+ *   - HTTP 401 selalu dianggap masalah key.
+ *   - HTTP 400/403 hanya jika pesannya menyebut "API key" / API_KEY_INVALID
+ *     (Gemini membalas 400 untuk key salah; 400/403 lain bisa spesifik-model).
+ *   - Timeout dan 429 (rate limit) BUKAN masalah key.
+ */
+function isKeyError(error) {
+  const status = error?.status;
+  if (status === 401) return true;
+  if (status === 400 || status === 403) return /api[_ ]?key/i.test(String(error?.message ?? ''));
+  return false;
+}
+
+/**
  * generateWithFallback — coba tiap (provider, model) di `plan` SEKALI, berurutan.
  *
  * Batas (tidak ada retry tanpa akhir):
@@ -90,27 +105,34 @@ const AI_TOTAL_TIMEOUT_MS   = Math.max(AI_ATTEMPT_TIMEOUT_MS, Number(process.env
  *   - Seluruh rantai dibatasi totalTimeoutMs.
  *   - SDK Groq/OpenRouter dibuat dengan maxRetries: 0 supaya tidak ada retry
  *     tersembunyi di dalamnya.
+ *   - Kalau satu percobaan gagal karena API key bermasalah (lihat isKeyError),
+ *     sisa model milik provider yang sama dilewati — key-nya sama, pasti gagal.
  */
 async function generateWithFallback(plan, systemPrompt, history, userMessage, onAttempt, options = {}) {
   const attemptTimeoutMs = options.attemptTimeoutMs ?? AI_ATTEMPT_TIMEOUT_MS;
   const totalTimeoutMs   = options.totalTimeoutMs   ?? AI_TOTAL_TIMEOUT_MS;
   const deadline = Date.now() + totalTimeoutMs;
   const errors = [];
+  const badKeyProviders = new Set();
+  let attemptNo = 0;
 
   for (let i = 0; i < plan.length; i++) {
+    if (badKeyProviders.has(plan[i].provider.id)) continue;
+
     const remaining = deadline - Date.now();
     if (remaining <= 0) {
-      errors.push({ providerId: '-', modelId: '-', error: new Error(`batas total ${totalTimeoutMs}ms tercapai sebelum percobaan #${i + 1}`) });
+      errors.push({ providerId: '-', modelId: '-', error: new Error(`batas total ${totalTimeoutMs}ms tercapai sebelum percobaan #${attemptNo + 1}`) });
       break;
     }
 
     const { provider, modelId } = plan[i];
+    attemptNo++;
     const timeoutMs  = Math.min(attemptTimeoutMs, remaining);
     const controller = new AbortController();
     let timer;
 
     try {
-      if (onAttempt) onAttempt({ providerId: provider.id, modelId, attempt: i + 1 });
+      if (onAttempt) onAttempt({ providerId: provider.id, modelId, attempt: attemptNo });
 
       const work = (async () => provider.generateReply(
         systemPrompt, history, userMessage, modelId, { signal: controller.signal },
@@ -128,7 +150,12 @@ async function generateWithFallback(plan, systemPrompt, history, userMessage, on
       return { text, providerId: provider.id, modelId };
     } catch (error) {
       errors.push({ providerId: provider.id, modelId, error });
-      if (onAttempt) onAttempt({ providerId: provider.id, modelId, attempt: i + 1, error });
+      if (onAttempt) onAttempt({ providerId: provider.id, modelId, attempt: attemptNo, error });
+      if (isKeyError(error)) {
+        badKeyProviders.add(provider.id);
+        const skipped = plan.slice(i + 1).filter((x) => x.provider.id === provider.id).length;
+        if (skipped > 0) console.warn(`[AI] API key "${provider.id}" bermasalah — melewati ${skipped} model lain milik provider ini.`);
+      }
     } finally {
       clearTimeout(timer);
     }

@@ -205,6 +205,41 @@ test('router: percobaan yang menggantung di-timeout, di-abort, lalu lanjut', asy
   assert.ok(dt >= 55 && dt < 400, `elapsed ${dt}ms`);
   assert.equal(hang.calls[0][4].signal.aborted, true);
 });
+const errWith = (status, message) => Object.assign(new Error(message), { status });
+test('router: error key (401) -> sisa model provider yang sama dilewati, provider lain tetap dicoba', async () => {
+  const a = mkProvider('a', async () => { throw errWith(401, 'Invalid API Key'); });
+  const b = mkProvider('b', async () => 'dari-b');
+  const plan = [{ provider: a, modelId: 'a0' }, { provider: a, modelId: 'a1' }, { provider: b, modelId: 'b0' }];
+  const attempts = [];
+  const r = await generateWithFallback(plan, 'S', [], 'u', (e) => { if (!e.error) attempts.push(e.attempt); });
+  assert.equal(r.providerId, 'b');
+  assert.equal(a.calls.length, 1, 'model kedua provider dengan key rusak tidak boleh dicoba');
+  assert.deepEqual(attempts, [1, 2], 'nomor percobaan dihitung dari percobaan nyata');
+});
+test('router: Gemini 400 "API key not valid" juga dianggap error key', async () => {
+  const g = mkProvider('g', async () => { throw errWith(400, '{"error":{"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}'); });
+  const ok = mkProvider('ok', async () => 'ok');
+  await generateWithFallback([{ provider: g, modelId: 'm0' }, { provider: g, modelId: 'm1' }, { provider: ok, modelId: 'x' }], 'S', [], 'u');
+  assert.equal(g.calls.length, 1);
+});
+for (const [label, err] of [
+  ['400 bukan soal key', errWith(400, 'Invalid argument: unsupported parameter')],
+  ['403 bukan soal key', errWith(403, 'Model not available in your region')],
+  ['429 rate limit', errWith(429, 'rate limited')],
+  ['500 server error', errWith(500, 'internal error')],
+]) {
+  test(`router: ${label} BUKAN error key -> model lain milik provider yang sama tetap dicoba`, async () => {
+    const a = mkProvider('a', async (_s, _h, _u, modelId) => { if (modelId === 'a0') throw err; return 'dari-a1'; });
+    const r = await generateWithFallback([{ provider: a, modelId: 'a0' }, { provider: a, modelId: 'a1' }], 'S', [], 'u');
+    assert.equal(r.text, 'dari-a1');
+    assert.equal(a.calls.length, 2);
+  });
+}
+test('router: timeout BUKAN error key -> model lain milik provider yang sama tetap dicoba', async () => {
+  const a = mkProvider('a', (_s, _h, _u, modelId) => (modelId === 'a0' ? new Promise(() => {}) : Promise.resolve('dari-a1')));
+  const r = await generateWithFallback([{ provider: a, modelId: 'a0' }, { provider: a, modelId: 'a1' }], 'S', [], 'u', null, { attemptTimeoutMs: 40, totalTimeoutMs: 1000 });
+  assert.equal(r.text, 'dari-a1');
+});
 test('router: semua gagal -> satu error ringkasan, tidak ada retry', async () => {
   const mk = (id) => mkProvider(id, async () => { throw new Error(`boom-${id}`); });
   const [a, b, c] = [mk('a'), mk('b'), mk('c')];
@@ -323,7 +358,7 @@ test('hanya gemini-1 (rusak) + gemini-2 (sehat): SELALU berakhir di gemini-2, da
     const plan = buildProviderModelPlan(providers, { activeProviderType: null, activeModelId: null });
     const r = await generateWithFallback(plan, 'S', [], 'u');
     assert.equal(r.providerId, 'gemini-2');
-    assert.equal(keysSeen.filter((k) => k === 'BAD').length <= TIERS.gemini.models.length, true);
+    assert.ok(keysSeen.filter((k) => k === 'BAD').length <= 1, 'key rusak hanya boleh dicoba 1x per pesan');
     assert.equal(keysSeen.filter((k) => k === 'GOOD').length >= 1, true);
   }
 }));
