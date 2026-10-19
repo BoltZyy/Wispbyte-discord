@@ -1,3 +1,4 @@
+## placeholder apparently 
 Ovelia
 
 A Discord AI bot powered by multiple AI providers, featuring automatic fallback and modular architecture.
