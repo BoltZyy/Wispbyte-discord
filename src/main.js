@@ -11,6 +11,7 @@ const { buildCommandList } = require('./discord/commands');
 const { registerInteractionHandler } = require('./discord/interactions');
 const { registerMessageHandler } = require('./discord/messages');
 const { startActivityRotation } = require('./discord/presence');
+const { initStorage } = require('./storage');
 const { modelConfig, welcomeConfig } = require('./storage/state');
 
 /* =========================================================================
@@ -38,6 +39,11 @@ async function main() {
   } catch (err) {
     console.warn(`⚠️  No AI providers configured — AI replies disabled. (${err.message})`);
   }
+
+  // Database SQLite untuk fitur moderasi (tahap berikutnya). Tidak pernah melempar:
+  // kalau gagal, storage = null dan fitur AI tetap berjalan.
+  const storage = initStorage();
+  if (storage) process.once('exit', () => { try { storage.close(); } catch { /* sudah tertutup */ } });
 
   const client = new Client({
     intents: [

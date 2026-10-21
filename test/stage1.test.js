@@ -395,15 +395,33 @@ test('smoke: main() login, wiring event, registrasi 11 slash command', async () 
   assert.equal(actual, fs.readFileSync(goldenPath, 'utf8'), 'definisi slash command berubah dari golden');
 });
 async function captureStartupLogs() {
-  const out = []; const l = console.log, w = console.warn;
-  console.log = (...a) => out.push(a.join(' ')); console.warn = (...a) => out.push(a.join(' '));
-  try { await bot.main(); } finally { console.log = l; console.warn = w; }
+  const out = []; const l = console.log, w = console.warn, e = console.error;
+  console.log = (...a) => out.push(a.join(' ')); console.warn = (...a) => out.push(a.join(' ')); console.error = (...a) => out.push(a.join(' '));
+  try { await bot.main(); } finally { console.log = l; console.warn = w; console.error = e; }
   return out;
 }
 test('smoke: startup memperingatkan override lama yang modelnya sudah dibuang (tanpa log "aktif")', async () => {
   const logs = (await captureStartupLogs()).join('\n');
   assert.match(logs, /llama-3\.1-8b-instant.*override diabaikan/);
   assert.ok(!/Override manual aktif/.test(logs));
+});
+test('smoke: startup membuka database SQLite di folder data/ proyek dan mencatat statusnya', async () => {
+  const logs = (await captureStartupLogs()).join('\n');
+  assert.match(logs, /\[DB\] SQLite siap: .*ovelia\.sqlite \(schema v1, journal=wal, start ke-\d+\)/);
+  assert.ok(fs.existsSync(path.join(tmp, 'data', 'ovelia.sqlite')), 'file database harus berada di data/ pada root proyek');
+});
+test('smoke: database gagal dibuka -> bot tetap start dan login (fitur AI tidak terganggu)', async () => {
+  const saved = process.env.DB_PATH;
+  process.env.DB_PATH = path.join('index.js', 'tidak-bisa.sqlite'); // induknya file biasa -> gagal
+  const before = rec.clients.length;
+  try {
+    const logs = (await captureStartupLogs()).join('\n');
+    assert.match(logs, /\[DB\] Gagal membuka database .*fitur AI tetap berjalan/);
+    assert.equal(rec.clients.length, before + 1, 'client Discord tetap dibuat');
+    assert.equal(rec.clients.at(-1).token, 'TOK', 'login tetap dipanggil');
+  } finally {
+    if (saved === undefined) delete process.env.DB_PATH; else process.env.DB_PATH = saved;
+  }
 });
 test('smoke: pesan -> balasan AI via Groq (tanpa model mati; override lama diabaikan)', async () => {
   const c = rec.clients[0]; const replies = []; rec.groq.length = 0; rec.gemini.length = 0;
@@ -493,7 +511,11 @@ test('modul: tidak ada dependensi melingkar dan arah dependensi hanya ke lapisan
   const rankOf = (f) => RANK[path.relative(SRC_DIR, f).split(path.sep)[0]];
   const graph = new Map();
   for (const f of listJs(SRC_DIR)) {
-    const deps = [...fs.readFileSync(f, 'utf8').matchAll(/require\('(\.[^']+)'\)/g)].map((m) => path.resolve(path.dirname(f), m[1]) + '.js');
+    const resolveReq = (from, req) => {
+      const base = path.resolve(path.dirname(from), req);
+      return fs.existsSync(`${base}.js`) ? `${base}.js` : path.join(base, 'index.js'); // ./x -> x.js atau x/index.js
+    };
+    const deps = [...fs.readFileSync(f, 'utf8').matchAll(/require\('(\.[^']+)'\)/g)].map((m) => resolveReq(f, m[1]));
     graph.set(f, deps);
     for (const d of deps) {
       assert.ok(fs.existsSync(d), `${path.relative(SRC_DIR, f)} me-require file yang tidak ada: ${d}`);

@@ -28,6 +28,7 @@ function saveJSON(filePath, data) {
 }
 
 module.exports = {
+  ROOT_DIR,
   BLOCKLIST_PATH,
   CONFIG_PATH,
   MODEL_CONFIG_PATH,

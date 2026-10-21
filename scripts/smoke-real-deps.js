@@ -23,4 +23,18 @@ const commands = buildCommandList(); // sudah berupa JSON; validasi SlashCommand
 assert.equal(commands.length, 11);
 for (const c of commands) assert.ok(c.name && c.description, `command tanpa nama/deskripsi: ${JSON.stringify(c).slice(0, 80)}`);
 
-console.log(`OK — ${providers.length} provider, ${commands.length} slash command, event ready = "${Events.ClientReady}"`);
+// Database SQLite (node:sqlite bawaan Node) di folder sementara: buka, tulis, baca, tutup.
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { initStorage } = require('../src/storage');
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ovelia-smoke-'));
+const errors = [];
+const storage = initStorage({ dbPath: path.join(dir, 'smoke.sqlite'), log: { log() {}, error: (m) => errors.push(m) } });
+assert.ok(storage, `database gagal dibuka: ${errors.join(' | ')}`);
+storage.settings.set('G', 'k', 1);
+assert.equal(storage.settings.get('G', 'k'), 1);
+storage.close();
+fs.rmSync(dir, { recursive: true, force: true });
+
+console.log(`OK — ${providers.length} provider, ${commands.length} slash command, event ready = "${Events.ClientReady}", SQLite OK`);

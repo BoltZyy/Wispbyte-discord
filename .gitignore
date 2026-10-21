@@ -6,3 +6,9 @@ config.json
 responders.json
 blocklist.json
 model_config.json
+
+# database SQLite (data produksi) dan backup-nya
+data/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
