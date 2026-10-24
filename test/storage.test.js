@@ -16,7 +16,9 @@ const { MIGRATIONS } = require('../src/storage/migrations');
 const { createSettingsRepo, createAuditRepo } = require('../src/storage/repositories');
 const { initStorage } = require('../src/storage');
 const { TtlStore } = require('../src/core/ttlStore');
+const { createCompressedBackup } = require('../src/storage/backup');
 
+const LATEST = MIGRATIONS[MIGRATIONS.length - 1].version;
 const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ovelia-db-'));
 const tables = (db) => db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((r) => r.name);
 const silentLog = () => { const out = { logs: [], errors: [] }; out.log = (m) => out.logs.push(m); out.error = (m) => out.errors.push(m); return out; };
@@ -25,7 +27,7 @@ const silentLog = () => { const out = { logs: [], errors: [] }; out.log = (m) =>
 test('db: database baru dimigrasi ke versi terbaru, tabel ada, journal WAL', () => {
   const db = openDatabase(path.join(tmpDir(), 'a.sqlite'));
   assert.equal(db.schemaVersion, MIGRATIONS[MIGRATIONS.length - 1].version);
-  assert.deepEqual(tables(db), ['guild_settings', 'moderation_logs']);
+  assert.deepEqual(tables(db), ['guild_settings', 'moderation_logs', 'warnings']);
   assert.equal(db.journalMode, 'wal');
   db.close();
 });
@@ -150,7 +152,7 @@ test('initStorage: sukses mencatat status; gagal mengembalikan null dan TIDAK me
   const dir = tmpDir(); const ok = silentLog();
   const st = initStorage({ dbPath: path.join(dir, 'x', 'ok.sqlite'), log: ok });
   assert.ok(st && st.db && st.settings && st.audit);
-  assert.match(ok.logs[0], /\[DB\] SQLite siap: .*ok\.sqlite \(schema v1, journal=wal, start ke-1\)/);
+  assert.match(ok.logs[0], new RegExp(`\\[DB\\] SQLite siap: .*ok\\.sqlite \\(schema v${LATEST}, journal=wal, start ke-1\\)`));
   st.audit.log({ guildId: 'G1', action: 'a' });
   st.close();
 
@@ -219,4 +221,25 @@ test('TtlStore: sweeper berkala tidak menahan proses tetap hidup (unref) dan bis
   assert.equal(s._timer.hasRef(), false);
   assert.equal(s.startSweeper(1000), s, 'idempoten');
   s.stop(); assert.equal(s._timer, null);
+});
+
+test('createCompressedBackup: nama berkas benar, isi gzip bisa dipulihkan, sisa berkas lama dibersihkan, berkas lain aman', async () => {
+  const dir = tmpDir(); const db = openDatabase(path.join(dir, 'x.sqlite'));
+  createSettingsRepo(db).set('G1', 'k', 'isi');
+  const bdir = path.join(dir, 'backups'); fs.mkdirSync(bdir);
+  const old = path.join(bdir, 'ovelia-20200101-000000.sqlite.gz'); const oldTmp = path.join(bdir, 'ovelia-20200101-000000.sqlite.tmp');
+  const other = path.join(bdir, 'catatan.txt'); const fresh = path.join(bdir, 'ovelia-20991231-235959.sqlite.gz');
+  for (const f of [old, oldTmp, other, fresh]) fs.writeFileSync(f, 'x');
+  const past = new Date(Date.now() - 2 * 3600 * 1000);
+  for (const f of [old, oldTmp, other]) fs.utimesSync(f, past, past);
+
+  const b = await createCompressedBackup(db);
+  assert.match(b.name, /^ovelia-\d{8}-\d{6}\.sqlite\.gz$/);
+  assert.ok(b.bytes > 0 && fs.existsSync(b.path));
+  assert.ok(!fs.existsSync(old) && !fs.existsSync(oldTmp), 'sisa berkas lama harus dibersihkan');
+  assert.ok(fs.existsSync(other) && fs.existsSync(fresh), 'berkas lain / yang masih baru tidak boleh dihapus');
+
+  const restored = path.join(dir, 'pulih.sqlite'); fs.writeFileSync(restored, require('node:zlib').gunzipSync(fs.readFileSync(b.path)));
+  const copy = openDatabase(restored); assert.equal(createSettingsRepo(copy).get('G1', 'k'), 'isi'); copy.close(); db.close();
+  await assert.rejects(() => createCompressedBackup(openDatabase(':memory:')), /tidak didukung untuk database di memori/);
 });

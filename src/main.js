@@ -9,8 +9,10 @@ const { validateEnv } = require('./config/env');
 const { formatWelcomeMessage } = require('./core/text');
 const { buildCommandList } = require('./discord/commands');
 const { registerInteractionHandler } = require('./discord/interactions');
+const { buildModerationCommandList, createModeration } = require('./discord/moderation');
 const { registerMessageHandler } = require('./discord/messages');
 const { startActivityRotation } = require('./discord/presence');
+const { OWNER_ID } = require('./core/owner');
 const { initStorage } = require('./storage');
 const { modelConfig, welcomeConfig } = require('./storage/state');
 
@@ -72,7 +74,8 @@ async function main() {
     console.log(`[Model] Override manual aktif: ${modelConfig.activeProviderType}/${modelConfig.activeModelId} (Attempt #1). Jalankan /model reset untuk kembali ke urutan otomatis.`);
   }
 
-  registerInteractionHandler(client, providers);
+  const moderation = createModeration({ storage, ownerId: OWNER_ID });
+  registerInteractionHandler(client, providers, { moderation });
   registerMessageHandler(client, providers, {
     prefix:       process.env.COMMAND_PREFIX || '!tanya',
     systemPrompt: process.env.SYSTEM_PROMPT  || process.env.Personality,
@@ -81,11 +84,12 @@ async function main() {
   client.once(Events.ClientReady, async () => {
     console.log(`🤖 Logged in as ${client.user.tag}!`);
     startActivityRotation(client, welcomeConfig.activity);
+    moderation.startScheduler(client); // backup terjadwal (jika channel backup diatur)
 
     const rest = new REST({ version: '10' }).setToken(token);
     try {
       console.log('Refreshing application (/) commands...');
-      await rest.put(Routes.applicationCommands(client.user.id), { body: buildCommandList() });
+      await rest.put(Routes.applicationCommands(client.user.id), { body: [...buildCommandList(), ...buildModerationCommandList()] });
       console.log('Successfully reloaded application (/) commands.');
     } catch (error) {
       console.error('Failed to register slash commands:', error);

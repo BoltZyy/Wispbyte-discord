@@ -36,6 +36,27 @@ const MIGRATIONS = [
       CREATE INDEX idx_modlogs_target     ON moderation_logs (guild_id, target_id, created_at DESC);
     `,
   },
+  {
+    version: 2,
+    name: 'warnings',
+    sql: `
+      -- status 'expired' disiapkan sekarang agar tidak perlu membangun ulang tabel
+      -- (SQLite tidak bisa mengubah CHECK); logika kedaluwarsa belum diimplementasikan.
+      CREATE TABLE warnings (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id       TEXT    NOT NULL,
+        user_id        TEXT    NOT NULL,
+        moderator_id   TEXT    NOT NULL,
+        reason         TEXT    NOT NULL,
+        created_at     INTEGER NOT NULL,
+        status         TEXT    NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'removed', 'expired')),
+        removed_by     TEXT,
+        removed_at     INTEGER,
+        removed_reason TEXT
+      ) STRICT;
+      CREATE INDEX idx_warnings_user ON warnings (guild_id, user_id, status, created_at DESC);
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };

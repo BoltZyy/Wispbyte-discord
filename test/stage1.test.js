@@ -76,7 +76,8 @@ const discordStub = {
   ActionRowBuilder: class { constructor() { return chain(); } },
   EmbedBuilder: class { constructor() { return chain(); } },
   TextInputStyle: { Paragraph: 2 },
-  PermissionFlagsBits: { ManageGuild: 32n },
+  PermissionFlagsBits: { Administrator: 8n, ManageGuild: 32n, ViewChannel: 1024n, SendMessages: 2048n, AttachFiles: 32768n, ModerateMembers: 1n << 40n },
+  ChannelType: { GuildText: 0 },
   ActivityType: { Playing: 0, Streaming: 1, Listening: 2, Watching: 3, Competing: 5 },
   MessageFlags: { Ephemeral: 64 },
   Events: { ClientReady: 'clientReady' },
@@ -387,10 +388,13 @@ test('smoke: main() login, wiring event, registrasi 11 slash command', async () 
   assert.equal(typeof c.once_[discordStub.Events.ClientReady], 'function');
   assert.equal(c.once_.ready, undefined, 'tidak boleh lagi memakai event \'ready\' yang deprecated');
   await c.once_[discordStub.Events.ClientReady]();
-  assert.equal(rec.restPut[0].length, 11);
-  // Golden: definisi 11 slash command harus identik dengan versi sebelum modularisasi.
+  // 11 command inti + 5 command moderasi (src/discord/moderation.js).
+  const names = rec.restPut[0].map((c) => c.find((e) => e[0] === 'setName')[1][0]);
+  assert.deepEqual(names.slice(11), ['warn', 'warnings', 'warning-remove', 'modconfig', 'backup']);
+  assert.equal(rec.restPut[0].length, 16);
+  // Golden: definisi 11 slash command inti harus identik dengan versi sebelum modularisasi.
   const goldenPath = path.join(__dirname, 'fixtures', 'commands.golden.json');
-  const actual = JSON.stringify(rec.restPut[0], null, 2) + '\n';
+  const actual = JSON.stringify(rec.restPut[0].slice(0, 11), null, 2) + '\n';
   if (process.env.UPDATE_GOLDEN === '1') { fs.mkdirSync(path.dirname(goldenPath), { recursive: true }); fs.writeFileSync(goldenPath, actual); }
   assert.equal(actual, fs.readFileSync(goldenPath, 'utf8'), 'definisi slash command berubah dari golden');
 });
@@ -407,7 +411,7 @@ test('smoke: startup memperingatkan override lama yang modelnya sudah dibuang (t
 });
 test('smoke: startup membuka database SQLite di folder data/ proyek dan mencatat statusnya', async () => {
   const logs = (await captureStartupLogs()).join('\n');
-  assert.match(logs, /\[DB\] SQLite siap: .*ovelia\.sqlite \(schema v1, journal=wal, start ke-\d+\)/);
+  assert.match(logs, /\[DB\] SQLite siap: .*ovelia\.sqlite \(schema v\d+, journal=wal, start ke-\d+\)/);
   assert.ok(fs.existsSync(path.join(tmp, 'data', 'ovelia.sqlite')), 'file database harus berada di data/ pada root proyek');
 });
 test('smoke: database gagal dibuka -> bot tetap start dan login (fitur AI tidak terganggu)', async () => {
@@ -435,6 +439,16 @@ test('smoke: /model status memberi peringatan untuk override lama', async () => 
   const c = rec.clients[0]; const replies = [];
   await c.handlers.interactionCreate(fakeInteraction('status', () => null, replies));
   assert.match(replies[0].content, /DIABAIKAN/);
+  assert.equal(replies[0].flags, 64);
+});
+test('smoke: command moderasi dirutekan lewat main -> handler interaksi -> modul moderasi (izin diperiksa di handler)', async () => {
+  const c = rec.clients[0]; const replies = [];
+  await c.handlers.interactionCreate({
+    isChatInputCommand: () => true, isAutocomplete: () => false, isModalSubmit: () => false,
+    inGuild: () => true, commandName: 'warnings', user: { id: 'RANDOM' }, memberPermissions: { has: () => false },
+    replied: false, deferred: false, reply: async (o) => { replies.push(o); },
+  });
+  assert.match(replies[0].content, /tidak punya izin/);
   assert.equal(replies[0].flags, 64);
 });
 test('smoke: /model set gemini-3.8-flash -> Attempt #1, gagal -> fallback tetap jalan sampai Groq', async () => {

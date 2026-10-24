@@ -80,4 +80,45 @@ function createAuditRepo(db, { now = Date.now } = {}) {
   };
 }
 
-module.exports = { createSettingsRepo, createAuditRepo };
+/** Peringatan (warning) anggota. */
+function createWarningsRepo(db, { now = Date.now } = {}) {
+  const insert = db.prepare(`
+    INSERT INTO warnings (guild_id, user_id, moderator_id, reason, created_at) VALUES (?, ?, ?, ?, ?)`);
+  const byId = db.prepare('SELECT * FROM warnings WHERE guild_id = ? AND id = ?');
+  const deactivate = db.prepare(`
+    UPDATE warnings SET status = 'removed', removed_by = ?, removed_at = ?, removed_reason = ?
+    WHERE guild_id = ? AND id = ? AND status = 'active'`);
+  const countActive = db.prepare("SELECT COUNT(*) AS n FROM warnings WHERE guild_id = ? AND user_id = ? AND status = 'active'");
+
+  const map = (r) => r && ({
+    id: r.id, guildId: r.guild_id, userId: r.user_id, moderatorId: r.moderator_id, reason: r.reason,
+    createdAt: r.created_at, status: r.status, removedBy: r.removed_by, removedAt: r.removed_at, removedReason: r.removed_reason,
+  });
+
+  return {
+    add({ guildId, userId, moderatorId, reason } = {}) {
+      const text = String(reason ?? '').trim();
+      if (!text) throw new TypeError('reason wajib diisi');
+      const res = insert.run(needId('guildId', guildId), needId('userId', userId), needId('moderatorId', moderatorId), text, now());
+      return map(byId.get(String(guildId), Number(res.lastInsertRowid)));
+    },
+    get(guildId, id) { return map(byId.get(needId('guildId', guildId), Number(id))); },
+    countActive(guildId, userId) { return countActive.get(needId('guildId', guildId), needId('userId', userId)).n; },
+    /** Terbaru dulu. Default hanya yang aktif. */
+    list({ guildId, userId, includeInactive = false, limit = 25 } = {}) {
+      const cap = Math.max(1, Math.min(MAX_LIST_LIMIT, Number(limit) || 25));
+      const where = includeInactive ? 'guild_id = ? AND user_id = ?' : "guild_id = ? AND user_id = ? AND status = 'active'";
+      return db.prepare(`SELECT * FROM warnings WHERE ${where} ORDER BY id DESC LIMIT ${cap}`)
+        .all(needId('guildId', guildId), needId('userId', userId)).map(map);
+    },
+    /** Mencabut peringatan aktif. Hasil: { ok: true, row } | { ok: false, reason: 'not_found' | 'already_inactive' }. */
+    remove({ guildId, id, removedBy, reason } = {}) {
+      const gid = needId('guildId', guildId);
+      const res = deactivate.run(needId('removedBy', removedBy), now(), reason ?? null, gid, Number(id));
+      if (res.changes > 0) return { ok: true, row: map(byId.get(gid, Number(id))) };
+      return { ok: false, reason: byId.get(gid, Number(id)) ? 'already_inactive' : 'not_found' };
+    },
+  };
+}
+
+module.exports = { createSettingsRepo, createAuditRepo, createWarningsRepo };

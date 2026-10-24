@@ -12,6 +12,7 @@ const assert = require('node:assert/strict');
 const bot = require('../index.js');
 const { Events } = require('discord.js');
 const { buildCommandList } = require('../src/discord/commands');
+const { buildModerationCommandList } = require('../src/discord/moderation');
 
 const providers = bot.buildProviderRegistry({ GEMINI_KEY_1: 'x', GEMINI_KEY_2: 'x', GROQ_KEY: 'x', OPENROUTER_KEY: 'x' });
 assert.deepEqual(providers.map((p) => p.id), ['gemini-1', 'gemini-2', 'groq-1', 'openrouter-1']);
@@ -21,6 +22,9 @@ assert.equal(typeof Events.ClientReady, 'string');
 
 const commands = buildCommandList(); // sudah berupa JSON; validasi SlashCommandBuilder asli terjadi di dalam fungsi ini
 assert.equal(commands.length, 11);
+const modCommands = buildModerationCommandList(); // validasi SlashCommandBuilder asli untuk command moderasi
+assert.deepEqual(modCommands.map((c) => c.name), ['warn', 'warnings', 'warning-remove', 'modconfig', 'backup']);
+for (const c of modCommands) assert.ok(c.description, `command ${c.name} tanpa deskripsi`);
 for (const c of commands) assert.ok(c.name && c.description, `command tanpa nama/deskripsi: ${JSON.stringify(c).slice(0, 80)}`);
 
 // Database SQLite (node:sqlite bawaan Node) di folder sementara: buka, tulis, baca, tutup.
@@ -37,4 +41,4 @@ assert.equal(storage.settings.get('G', 'k'), 1);
 storage.close();
 fs.rmSync(dir, { recursive: true, force: true });
 
-console.log(`OK — ${providers.length} provider, ${commands.length} slash command, event ready = "${Events.ClientReady}", SQLite OK`);
+console.log(`OK — ${providers.length} provider, ${commands.length} + ${modCommands.length} slash command, event ready = "${Events.ClientReady}", SQLite OK`);
