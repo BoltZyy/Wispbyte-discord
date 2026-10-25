@@ -3,7 +3,7 @@
 const path = require('path');
 const { ROOT_DIR } = require('./files');
 const { openDatabase } = require('./db');
-const { createSettingsRepo, createAuditRepo, createWarningsRepo } = require('./repositories');
+const { createSettingsRepo, createAuditRepo, createWarningsRepo, createVerificationRepo } = require('./repositories');
 
 /**
  * Membuka database SQLite dan membuat repository. TIDAK PERNAH melempar error:
@@ -25,7 +25,7 @@ function initStorage({ dbPath = process.env.DB_PATH || path.join('data', 'ovelia
     const boots = settings.get('_system', 'boot_count', 0) + 1;
     settings.set('_system', 'boot_count', boots);
     log.log(`[DB] SQLite siap: ${resolved} (schema v${db.schemaVersion}, journal=${db.journalMode}, start ke-${boots})`);
-    return { db, settings, audit: createAuditRepo(db), warnings: createWarningsRepo(db), close: () => db.close() };
+    return { db, settings, audit: createAuditRepo(db), warnings: createWarningsRepo(db), verification: createVerificationRepo(db), close: () => db.close() };
   } catch (err) {
     try { db?.close(); } catch { /* abaikan */ }
     log.error(`[DB] Gagal membuka database (${resolved}): ${err.message} — fitur yang butuh database dinonaktifkan; fitur AI tetap berjalan.`);

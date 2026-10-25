@@ -57,6 +57,27 @@ const MIGRATIONS = [
       CREATE INDEX idx_warnings_user ON warnings (guild_id, user_id, status, created_at DESC);
     `,
   },
+  {
+    version: 3,
+    name: 'verification_records',
+    sql: `
+      -- Status 'pending_approval', 'approved', 'rejected' dicadangkan untuk verification
+      -- softban (persetujuan staf); belum dipakai. Disiapkan sekarang agar tidak perlu
+      -- membangun ulang tabel (SQLite tidak bisa mengubah CHECK).
+      -- JANGAN menyimpan jawaban peserta di tabel ini.
+      CREATE TABLE verification_records (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id    TEXT    NOT NULL,
+        user_id     TEXT    NOT NULL,
+        status      TEXT    NOT NULL DEFAULT 'started'
+                    CHECK (status IN ('started', 'passed', 'failed_attempts', 'timeout', 'pending_approval', 'approved', 'rejected')),
+        attempts    INTEGER NOT NULL DEFAULT 0,
+        started_at  INTEGER NOT NULL,
+        finished_at INTEGER
+      ) STRICT;
+      CREATE INDEX idx_verif_user ON verification_records (guild_id, user_id, started_at DESC);
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };

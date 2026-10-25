@@ -78,6 +78,8 @@ const discordStub = {
   TextInputStyle: { Paragraph: 2 },
   PermissionFlagsBits: { Administrator: 8n, ManageGuild: 32n, ViewChannel: 1024n, SendMessages: 2048n, AttachFiles: 32768n, ModerateMembers: 1n << 40n },
   ChannelType: { GuildText: 0 },
+  ButtonBuilder: class { constructor() { return chain(); } },
+  ButtonStyle: { Primary: 1, Secondary: 2 },
   ActivityType: { Playing: 0, Streaming: 1, Listening: 2, Watching: 3, Competing: 5 },
   MessageFlags: { Ephemeral: 64 },
   Events: { ClientReady: 'clientReady' },
@@ -388,10 +390,10 @@ test('smoke: main() login, wiring event, registrasi 11 slash command', async () 
   assert.equal(typeof c.once_[discordStub.Events.ClientReady], 'function');
   assert.equal(c.once_.ready, undefined, 'tidak boleh lagi memakai event \'ready\' yang deprecated');
   await c.once_[discordStub.Events.ClientReady]();
-  // 11 command inti + 5 command moderasi (src/discord/moderation.js).
+  // 11 command inti + 5 command moderasi + 1 command verification.
   const names = rec.restPut[0].map((c) => c.find((e) => e[0] === 'setName')[1][0]);
-  assert.deepEqual(names.slice(11), ['warn', 'warnings', 'warning-remove', 'modconfig', 'backup']);
-  assert.equal(rec.restPut[0].length, 16);
+  assert.deepEqual(names.slice(11), ['warn', 'warnings', 'warning-remove', 'modconfig', 'backup', 'verification']);
+  assert.equal(rec.restPut[0].length, 17);
   // Golden: definisi 11 slash command inti harus identik dengan versi sebelum modularisasi.
   const goldenPath = path.join(__dirname, 'fixtures', 'commands.golden.json');
   const actual = JSON.stringify(rec.restPut[0].slice(0, 11), null, 2) + '\n';

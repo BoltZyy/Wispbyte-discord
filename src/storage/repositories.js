@@ -121,4 +121,33 @@ function createWarningsRepo(db, { now = Date.now } = {}) {
   };
 }
 
-module.exports = { createSettingsRepo, createAuditRepo, createWarningsRepo };
+/** Catatan hasil verification (tanpa jawaban peserta). */
+function createVerificationRepo(db, { now = Date.now } = {}) {
+  const insert = db.prepare('INSERT INTO verification_records (guild_id, user_id, started_at) VALUES (?, ?, ?)');
+  const setAttempts = db.prepare("UPDATE verification_records SET attempts = ? WHERE id = ? AND status = 'started'");
+  const finish = db.prepare("UPDATE verification_records SET status = ?, attempts = ?, finished_at = ? WHERE id = ? AND status = 'started'");
+  const closeAll = db.prepare("UPDATE verification_records SET status = 'timeout', finished_at = ? WHERE status = 'started'");
+  const byId = db.prepare('SELECT * FROM verification_records WHERE id = ?');
+  const latest = db.prepare('SELECT * FROM verification_records WHERE guild_id = ? AND user_id = ? ORDER BY id DESC LIMIT 1');
+  const FINAL = new Set(['passed', 'failed_attempts', 'timeout']);
+  const map = (r) => r && ({ id: r.id, guildId: r.guild_id, userId: r.user_id, status: r.status, attempts: r.attempts, startedAt: r.started_at, finishedAt: r.finished_at });
+
+  return {
+    start({ guildId, userId } = {}) {
+      return Number(insert.run(needId('guildId', guildId), needId('userId', userId), now()).lastInsertRowid);
+    },
+    /** Mencatat jumlah percobaan sementara (status tetap 'started'). */
+    setAttempts(id, attempts) { return setAttempts.run(Number(attempts), Number(id)).changes > 0; },
+    /** Menutup catatan yang masih 'started'. Mengembalikan false kalau sudah ditutup sebelumnya. */
+    finish(id, status, attempts) {
+      if (!FINAL.has(status)) throw new TypeError(`status akhir tidak valid: ${status}`);
+      return finish.run(status, Number(attempts), now(), Number(id)).changes > 0;
+    },
+    /** Saat bot start: sesi hanya hidup di memori, jadi semua yang masih 'started' sudah mati. */
+    closeAllStarted() { return closeAll.run(now()).changes; },
+    get(id) { return map(byId.get(Number(id))); },
+    latest(guildId, userId) { return map(latest.get(needId('guildId', guildId), needId('userId', userId))); },
+  };
+}
+
+module.exports = { createSettingsRepo, createAuditRepo, createWarningsRepo, createVerificationRepo };

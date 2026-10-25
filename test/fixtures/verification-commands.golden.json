@@ -1,0 +1,160 @@
+[
+  [
+    [
+      "setName",
+      [
+        "verification"
+      ]
+    ],
+    [
+      "setDescription",
+      [
+        "Configure member verification"
+      ]
+    ],
+    [
+      "setDefaultMemberPermissions",
+      [
+        "32n"
+      ]
+    ],
+    [
+      "addSubcommand",
+      [
+        {
+          "cb": [
+            [
+              "setName",
+              [
+                "setup"
+              ]
+            ],
+            [
+              "setDescription",
+              [
+                "Set the Verified role (and the verification channel)"
+              ]
+            ],
+            [
+              "addRoleOption",
+              [
+                {
+                  "cb": [
+                    [
+                      "setName",
+                      [
+                        "role"
+                      ]
+                    ],
+                    [
+                      "setDescription",
+                      [
+                        "Role given after passing verification"
+                      ]
+                    ],
+                    [
+                      "setRequired",
+                      [
+                        true
+                      ]
+                    ]
+                  ]
+                }
+              ]
+            ],
+            [
+              "addChannelOption",
+              [
+                {
+                  "cb": [
+                    [
+                      "setName",
+                      [
+                        "channel"
+                      ]
+                    ],
+                    [
+                      "setDescription",
+                      [
+                        "Verification channel (default: where the panel is posted)"
+                      ]
+                    ],
+                    [
+                      "addChannelTypes",
+                      [
+                        0
+                      ]
+                    ]
+                  ]
+                }
+              ]
+            ]
+          ]
+        }
+      ]
+    ],
+    [
+      "addSubcommand",
+      [
+        {
+          "cb": [
+            [
+              "setName",
+              [
+                "question"
+              ]
+            ],
+            [
+              "setDescription",
+              [
+                "Set the verification question and its secret answer"
+              ]
+            ]
+          ]
+        }
+      ]
+    ],
+    [
+      "addSubcommand",
+      [
+        {
+          "cb": [
+            [
+              "setName",
+              [
+                "panel"
+              ]
+            ],
+            [
+              "setDescription",
+              [
+                "Post the verification panel (Start button)"
+              ]
+            ]
+          ]
+        }
+      ]
+    ],
+    [
+      "addSubcommand",
+      [
+        {
+          "cb": [
+            [
+              "setName",
+              [
+                "status"
+              ]
+            ],
+            [
+              "setDescription",
+              [
+                "Show the verification configuration"
+              ]
+            ]
+          ]
+        }
+      ]
+    ]
+  ]
+]

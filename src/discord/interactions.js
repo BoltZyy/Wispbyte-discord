@@ -9,11 +9,12 @@ const { OWNER_ID } = require('../core/owner');
 const { formatWelcomeMessage } = require('../core/text');
 const { blocklist, modelConfig, responders, saveBlocklist, saveModelConfig, saveResponders, saveWelcomeConfig, welcomeConfig } = require('../storage/state');
 
-function registerInteractionHandler(client, providers, { moderation } = {}) {
+function registerInteractionHandler(client, providers, { moderation, verification } = {}) {
   client.on('interactionCreate', async (interaction) => {
     try {
       // Command moderasi (src/discord/moderation.js) ditangani modul itu sendiri.
       if (moderation && await moderation.handle(interaction)) return;
+      if (verification && await verification.handle(interaction)) return; // /verification, tombol & modal verify:*
 
       // ── Autocomplete untuk /model set model:<...> ──
       // Dihitung LIVE dari PROVIDER_MODEL_TIERS tiap request — tidak perlu
