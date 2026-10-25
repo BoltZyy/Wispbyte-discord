@@ -17,7 +17,7 @@ Features
 
 Tech Stack
 
-- Node.js 20+
+- Node.js 20+ (must be above 20+)
 - Discord.js
 - Google GenAI SDK
 - Groq SDK
