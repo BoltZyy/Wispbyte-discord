@@ -49,14 +49,16 @@ const perms = (...flags) => {
 const member = (id, position) => ({ id, roles: { highest: { position, comparePositionTo(o) { return this.position - o.position; } } } });
 
 function fakeChannel(id, { text = true, guildId = 'G1', botPerms = perms(P.ViewChannel, P.SendMessages, P.AttachFiles), onSend } = {}) {
-  const ch = { id, guildId, sent: [], isTextBased: () => text, permissionsFor: () => botPerms,
+  // permissionsFor(null) mengembalikan null seperti discord.js asli -> kode yang lupa mengambil anggota bot akan gagal di tes
+  const ch = { id, guildId, sent: [], isTextBased: () => text, permissionsFor: (m) => (m ? botPerms : null),
     async send(m) { ch.sent.push(m); if (onSend) await onSend(m); } };
   return ch;
 }
 function fakeGuild({ ownerId = 'GUILDOWNER', members = [], channels = [] } = {}) {
   const mm = new Map(members.map((m) => [m.id, m])); const cc = new Map(channels.map((c) => [c.id, c]));
   return { id: 'G1', ownerId,
-    members: { me: { id: 'BOT' }, fetch: async (id) => { if (!mm.has(id)) throw new Error('Unknown Member'); return mm.get(id); } },
+    // Di bot asli cache anggota dimatikan (GuildMemberManager: 0) -> members.me == null; anggota bot harus diambil lewat fetchMe().
+    members: { me: null, fetchMe: async () => ({ id: 'BOT' }), fetch: async (id) => { if (!mm.has(id)) throw new Error('Unknown Member'); return mm.get(id); } },
     channels: { fetch: async (id) => cc.get(id) ?? null } };
 }
 function fakeInteraction({ command, sub = null, userId = 'MOD1', guild, member: mem, perm, opts = {} }) {
@@ -249,6 +251,15 @@ test('modconfig: izin ManageGuild diperiksa; channel valid disimpan + audit; cha
 
   const show = cfg('show'); await w.moderation.handle(show);
   assert.match(said(show), /modlog: <#CH_LOG>.*backup: <#CH_BK>.*\(belum pernah\)/s);
+});
+
+test('modconfig: gagal mengambil anggota bot (fetchMe error) -> pesan error umum, konfigurasi TIDAK berubah', async () => {
+  const w = world({ withModlog: false });
+  w.guild.members.fetchMe = async () => { throw new Error('Unknown Member'); };
+  const i = fakeInteraction({ command: 'modconfig', sub: 'modlog-channel', guild: w.guild, member: w.modMember, perm: perms(P.ManageGuild), opts: { channel: w.modlog } });
+  assert.equal(await w.moderation.handle(i), true);
+  assert.match(said(i), /Terjadi kesalahan.*TIDAK tercatat/s);
+  assert.equal(w.storage.settings.get('G1', 'modlog.channelId'), undefined);
 });
 
 /* ---------------- backup ---------------- */

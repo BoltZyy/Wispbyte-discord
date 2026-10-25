@@ -7,7 +7,7 @@ const {
 } = require('discord.js');
 const { TtlStore } = require('../core/ttlStore');
 const { answerMatches, makeAnswerRecord, normalizeAnswer } = require('../core/answer');
-const { hasGuildPermission } = require('./permissions');
+const { botCanManageRole, botCanSendIn, fetchBotMember, hasGuildPermission } = require('./permissions');
 
 /**
  * Verification utama (tahap 3).
@@ -58,6 +58,7 @@ function createVerification({
   }
 
   const keyOf = (guildId, userId) => `${guildId}:${userId}`;
+  const memberHasRole = (member, roleId) => (member.roles?.cache ? member.roles.cache.has(roleId) : Array.isArray(member.roles) && member.roles.includes(roleId));
 
   function readConfig(guildId) {
     const s = storage.settings;
@@ -104,7 +105,7 @@ function createVerification({
     const guildId = i.guild.id;
     const cfg = readConfig(guildId);
     if (!cfg.ready) return reply(i, '⚠️ Verifikasi belum dikonfigurasi oleh staf.');
-    if (i.member.roles.cache.has(cfg.roleId)) return reply(i, '✅ Anda sudah terverifikasi.');
+    if (memberHasRole(i.member, cfg.roleId)) return reply(i, '✅ Anda sudah terverifikasi.');
 
     const key = keyOf(guildId, i.user.id);
     const existing = store.get(key);
@@ -193,8 +194,6 @@ function createVerification({
   }
 
   /* ---------------- konfigurasi (staf) ---------------- */
-  const botCanPost = (channel, guild) => channel.permissionsFor(guild.members.me)?.has([PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages]);
-
   async function handleCommand(i) {
     if (!i.inGuild()) return reply(i, '❌ Command ini hanya bisa dipakai di server.');
     if (!hasGuildPermission(i, PermissionFlagsBits.ManageGuild)) return reply(i, MSG_NO_PERM);
@@ -214,8 +213,8 @@ function createVerification({
       const channel = i.options.getChannel('channel');
       if (role.id === guildId) return reply(i, '❌ Role @everyone tidak boleh dipakai sebagai role Verified.');
       if (role.managed) return reply(i, '❌ Role itu dikelola integrasi/bot lain dan tidak bisa diberikan.');
-      if (!role.editable) return reply(i, '❌ Bot tidak bisa mengelola role itu. Pastikan bot punya izin Manage Roles dan posisi role bot LEBIH TINGGI dari role tersebut.');
-      if (channel && (!channel.isTextBased?.() || channel.guildId !== guildId || !botCanPost(channel, i.guild))) {
+      if (!botCanManageRole(await fetchBotMember(i.guild), role, i.guild)) return reply(i, '❌ Bot tidak bisa mengelola role itu. Pastikan bot punya izin Manage Roles dan posisi role bot LEBIH TINGGI dari role tersebut.');
+      if (channel && (!channel.isTextBased?.() || channel.guildId !== guildId || !(await botCanSendIn(channel, i.guild)))) {
         return reply(i, '❌ Pilih channel teks di server ini yang bisa dikirimi pesan oleh bot.');
       }
       storage.db.transaction(() => {
@@ -230,7 +229,7 @@ function createVerification({
       const cfg = readConfig(guildId);
       if (!cfg.ready) return reply(i, '❌ Atur dulu `/verification setup` dan `/verification question`.');
       const channel = cfg.channelId ? await i.guild.channels.fetch(cfg.channelId).catch(() => null) : i.channel;
-      if (!channel?.isTextBased?.() || !botCanPost(channel, i.guild)) return reply(i, '❌ Channel verifikasi tidak ditemukan atau bot tidak bisa mengirim pesan di sana.');
+      if (!channel?.isTextBased?.() || !(await botCanSendIn(channel, i.guild))) return reply(i, '❌ Channel verifikasi tidak ditemukan atau bot tidak bisa mengirim pesan di sana.');
       await channel.send({
         content: `🔐 **Verifikasi**\nTekan tombol di bawah untuk memulai. Anda punya ${Math.round(sessionMs / 60000 * 10) / 10} menit dan ${maxAttempts} kali percobaan.`,
         components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('verify:start').setLabel('Mulai verifikasi').setStyle(ButtonStyle.Primary))],
@@ -287,7 +286,9 @@ function createVerification({
       else await reply(interaction, '❌ Komponen verifikasi tidak dikenali. Tekan "Mulai verifikasi" lagi.');
     } catch (err) {
       log.error(`[Verification] ${id || interaction.commandName} gagal: ${err.stack || err.message}`);
-      await reply(interaction, '❌ Terjadi kesalahan. Verifikasi TIDAK dianggap berhasil — coba lagi atau hubungi staf.').catch(() => {});
+      await reply(interaction, isCmd
+        ? '❌ Terjadi kesalahan. Konfigurasi tidak diubah — cek log bot.'
+        : '❌ Terjadi kesalahan. Verifikasi TIDAK dianggap berhasil — coba lagi atau hubungi staf.').catch(() => {});
     }
     return true;
   }

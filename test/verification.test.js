@@ -31,7 +31,7 @@ function dataBuilder() {
   });
   return proxy;
 }
-const P = { Administrator: 1n << 3n, ManageGuild: 1n << 5n, ViewChannel: 1n << 10n, SendMessages: 1n << 11n, ModerateMembers: 1n << 40n };
+const P = { Administrator: 1n << 3n, ManageRoles: 1n << 28n, ManageGuild: 1n << 5n, ViewChannel: 1n << 10n, SendMessages: 1n << 11n, ModerateMembers: 1n << 40n };
 const mk = (Cls) => class { constructor() { return Cls(); } };
 const discordStub = {
   SlashCommandBuilder: mk(recorder), ModalBuilder: mk(dataBuilder), TextInputBuilder: mk(dataBuilder), ActionRowBuilder: mk(dataBuilder), ButtonBuilder: mk(dataBuilder),
@@ -50,6 +50,8 @@ const silent = { log() {}, warn() {}, error() {} };
 const tmpDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ovelia-ver-'));
 const perms = (...flags) => { const bits = flags.reduce((a, f) => a | f, 0n); const admin = (bits & P.Administrator) !== 0n; return { has: (f) => (Array.isArray(f) ? f : [f]).every((x) => admin || (bits & x) === x) }; };
 const ANSWER = 'Kucing Biru';
+/** Role palsu: getter editable melempar TypeError persis seperti discord.js asli saat anggota bot tidak ada di cache. */
+const roleOf = (id, { managed = false, position = 5 } = {}) => ({ id, managed, position, get editable() { throw new TypeError("Cannot read properties of null (reading 'permissions')"); } });
 
 /* ---------------- dunia uji ---------------- */
 async function world({ configured = true, nullStorage = false } = {}) {
@@ -66,8 +68,10 @@ async function world({ configured = true, nullStorage = false } = {}) {
     return members.get(userId);
   };
   const sent = [];
-  const channel = { id: 'CH_V', guildId: 'G1', isTextBased: () => true, permissionsFor: () => perms(P.ViewChannel, P.SendMessages), send: async (m) => { sent.push(m); } };
-  const guild = { id: 'G1', ownerId: 'OWN', members: { me: { id: 'BOT' } }, channels: { fetch: async (id) => (id === 'CH_V' ? channel : null) } };
+  const channel = { id: 'CH_V', guildId: 'G1', isTextBased: () => true, permissionsFor: (m) => (m ? perms(P.ViewChannel, P.SendMessages) : null), send: async (m) => { sent.push(m); } };
+  // Meniru bot asli: cache anggota mati -> members.me == null, anggota bot hanya lewat fetchMe().
+  const botMember = { id: 'BOT', permissions: perms(P.ManageRoles), roles: { highest: { position: 10 } } };
+  const guild = { id: 'G1', ownerId: 'OWN', members: { me: null, fetchMe: async () => botMember }, channels: { fetch: async (id) => (id === 'CH_V' ? channel : null) } };
   if (configured && storage) {
     storage.settings.set('G1', 'verify.roleId', 'ROLE_V');
     storage.settings.set('G1', 'verify.question', 'Apa nama hewan peliharaan kita?');
@@ -95,7 +99,7 @@ async function world({ configured = true, nullStorage = false } = {}) {
   const answer = async (userId, sid, text) => { const i = modal(userId, `verify:submit:${sid}`, { answer: text }); await verification.handle(i); return i; };
   const records = () => storage.db.prepare('SELECT * FROM verification_records ORDER BY id').all();
   const auditActions = () => storage.audit.list({ guildId: 'G1', limit: 200 }).map((r) => r.action).reverse();
-  return { storage, clock, verification, roleAdds, memberOf, sent, channel, guild, button, modal, command, said, replyOf, sidOf, startFlow, answer, records, auditActions, now };
+  return { botMember, storage, clock, verification, roleAdds, memberOf, sent, channel, guild, button, modal, command, said, replyOf, sidOf, startFlow, answer, records, auditActions, now };
 }
 
 /* ---------------- jawaban ter-hash ---------------- */
@@ -131,7 +135,7 @@ test('command: definisi /verification identik dengan golden', () => {
 test('konfigurasi: semua sub-command menolak pengguna tanpa ManageGuild', async () => {
   const w = await world({ configured: false });
   for (const sub of ['setup', 'question', 'panel', 'status']) {
-    const i = w.command('U1', sub, { role: { id: 'R', managed: false, editable: true } }, perms(P.ModerateMembers));
+    const i = w.command('U1', sub, { role: roleOf('R') }, perms(P.ModerateMembers));
     assert.equal(await w.verification.handle(i), true);
     assert.match(w.said(i), /tidak punya izin/); assert.equal(i.calls.modal.length, 0);
   }
@@ -140,16 +144,27 @@ test('konfigurasi: semua sub-command menolak pengguna tanpa ManageGuild', async 
 test('konfigurasi: setup memvalidasi role dan channel, lalu menyimpan + audit', async () => {
   const w = await world({ configured: false });
   const run = async (opts) => { const i = w.command('ADMIN', 'setup', opts); await w.verification.handle(i); return w.said(i); };
-  assert.match(await run({ role: { id: 'G1', managed: false, editable: true } }), /@everyone/);
-  assert.match(await run({ role: { id: 'R1', managed: true, editable: true } }), /dikelola integrasi/);
-  assert.match(await run({ role: { id: 'R1', managed: false, editable: false } }), /posisi role bot LEBIH TINGGI/);
+  assert.match(await run({ role: roleOf('G1') }), /@everyone/);
+  assert.match(await run({ role: roleOf('R1', { managed: true }) }), /dikelola integrasi/);
+  assert.match(await run({ role: roleOf('R1', { position: 11 }) }), /posisi role bot LEBIH TINGGI/);
+  assert.match(await run({ role: roleOf('R1', { position: 10 }) }), /posisi role bot LEBIH TINGGI/, 'posisi sama = tidak cukup');
+  w.botMember.permissions = perms();
+  assert.match(await run({ role: roleOf('R1') }), /Manage Roles/, 'bot tanpa izin Manage Roles ditolak');
+  w.botMember.permissions = perms(P.ManageRoles);
   const voice = { id: 'V', guildId: 'G1', isTextBased: () => false, permissionsFor: () => perms() };
-  assert.match(await run({ role: { id: 'R1', managed: false, editable: true }, channel: voice }), /channel teks/);
+  assert.match(await run({ role: roleOf('R1'), channel: voice }), /channel teks/);
   assert.equal(w.storage.settings.get('G1', 'verify.roleId'), undefined, 'validasi gagal tidak boleh menyimpan apa pun');
 
-  assert.match(await run({ role: { id: 'R1', managed: false, editable: true }, channel: w.channel }), /Role Verified: <@&R1>.*<#CH_V>/);
+  assert.match(await run({ role: roleOf('R1'), channel: w.channel }), /Role Verified: <@&R1>.*<#CH_V>/);
   assert.equal(w.storage.settings.get('G1', 'verify.roleId'), 'R1'); assert.equal(w.storage.settings.get('G1', 'verify.channelId'), 'CH_V');
   assert.ok(w.auditActions().includes('config_change'));
+});
+test('konfigurasi: gagal mengambil anggota bot (fetchMe error) -> pesan error konfigurasi, tidak ada yang tersimpan', async () => {
+  const w = await world({ configured: false });
+  w.guild.members.fetchMe = async () => { throw new Error('Unknown Member'); };
+  const i = w.command('ADMIN', 'setup', { role: roleOf('R1') }); await w.verification.handle(i);
+  assert.match(w.said(i), /Konfigurasi tidak diubah — cek log bot/);
+  assert.equal(w.storage.settings.get('G1', 'verify.roleId'), undefined);
 });
 test('konfigurasi: question membuka modal; jawaban disimpan sebagai hash dan TIDAK muncul di database/log', async () => {
   const w = await world({ configured: false });

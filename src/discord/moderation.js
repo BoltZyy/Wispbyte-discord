@@ -5,7 +5,7 @@ const {
   ChannelType, MessageFlags, PermissionFlagsBits, SlashCommandBuilder,
 } = require('discord.js');
 const { createCompressedBackup } = require('../storage/backup');
-const { checkTargetHierarchy, hasGuildPermission, isGuildOwner } = require('./permissions');
+const { botCanSendIn, checkTargetHierarchy, hasGuildPermission, isGuildOwner } = require('./permissions');
 
 /**
  * Moderasi (tahap 2): /warn, /warnings, /warning-remove, /modconfig, /backup.
@@ -162,10 +162,8 @@ function createModeration({
 
     const channel = i.options.getChannel('channel', true);
     if (!channel.isTextBased?.() || channel.guildId !== guildId) return reply(i, '❌ Pilih channel teks di server ini.');
-    const needed = sub === 'backup-channel'
-      ? [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles]
-      : [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages];
-    if (!channel.permissionsFor(i.guild.members.me)?.has(needed)) {
+    const extra = sub === 'backup-channel' ? [PermissionFlagsBits.AttachFiles] : [];
+    if (!(await botCanSendIn(channel, i.guild, extra))) {
       return reply(i, `❌ Bot belum punya izin yang cukup di <#${channel.id}> (${sub === 'backup-channel' ? 'Lihat Channel, Kirim Pesan, Lampirkan File' : 'Lihat Channel, Kirim Pesan'}).`);
     }
     const key = sub === 'modlog-channel' ? 'modlog.channelId' : 'backup.channelId';
