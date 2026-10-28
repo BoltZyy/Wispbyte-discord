@@ -66,7 +66,7 @@ class StubClient {
 const discordStub = {
   Client: StubClient,
   GatewayIntentBits: new Proxy({}, { get: (_t, k) => String(k) }),
-  Partials: { Channel: 'Channel' },
+  Partials: { Channel: 'Channel', Message: 'Message' },
   Options: { cacheWithLimits: (o) => o, DefaultSweeperSettings: {} },
   REST: class { setToken() { return this; } async put(_route, { body }) { rec.restPut.push(body); } },
   Routes: { applicationCommands: (id) => `/apps/${id}/commands` },
@@ -390,10 +390,10 @@ test('smoke: main() login, wiring event, registrasi 11 slash command', async () 
   assert.equal(typeof c.once_[discordStub.Events.ClientReady], 'function');
   assert.equal(c.once_.ready, undefined, 'tidak boleh lagi memakai event \'ready\' yang deprecated');
   await c.once_[discordStub.Events.ClientReady]();
-  // 11 command inti + 5 command moderasi + 1 verification + 1 banned-word.
+  // 11 command inti + 5 command moderasi + 1 verification + 1 banned-word + 1 modpass.
   const names = rec.restPut[0].map((c) => c.find((e) => e[0] === 'setName')[1][0]);
-  assert.deepEqual(names.slice(11), ['warn', 'warnings', 'warning-remove', 'modconfig', 'backup', 'verification', 'banned-word']);
-  assert.equal(rec.restPut[0].length, 18);
+  assert.deepEqual(names.slice(11), ['warn', 'warnings', 'warning-remove', 'modconfig', 'backup', 'verification', 'banned-word', 'modpass']);
+  assert.equal(rec.restPut[0].length, 19);
   // Golden: definisi 11 slash command inti harus identik dengan versi sebelum modularisasi.
   const goldenPath = path.join(__dirname, 'fixtures', 'commands.golden.json');
   const actual = JSON.stringify(rec.restPut[0].slice(0, 11), null, 2) + '\n';
@@ -498,6 +498,7 @@ test('statis: tidak ada "ephemeral:" lama, tidak ada SDK Gemini lama', () => {
   assert.ok(!/ephemeral:\s*true/.test(src));
   assert.ok(!src.includes('@google/generative-ai'));
   assert.ok(!/\.once\('ready'/.test(src), "masih memakai event 'ready'");
+  assert.ok(/partials:\s*\[[^\]]*Partials\.Message/.test(src), 'Partials.Message wajib aktif agar edit pesan (messageUpdate) tertangkap filter');
   assert.ok(src.includes('Events.ClientReady'));
   const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
   assert.ok(pkg.dependencies['@google/genai']);

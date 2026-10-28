@@ -26,7 +26,7 @@ function buildBannedWordCommandList() {
       .addSubcommand((s) => s.setName('add').setDescription('Create a rule')
         .addStringOption((o) => o.setName('name').setDescription('Rule name').setRequired(true).setMaxLength(MAX_NAME))
         .addStringOption((o) => o.setName('phrase').setDescription('Word or phrase to match').setRequired(true).setMaxLength(MAX_PHRASE_LENGTH))
-        .addStringOption((o) => o.setName('reason').setDescription('Reason shown to staff (generic, not the pattern)').setRequired(true).setMaxLength(MAX_REASON))
+        .addStringOption((o) => o.setName('reason').setDescription('Reason shown PUBLICLY in the notice (generic; never the pattern)').setRequired(true).setMaxLength(MAX_REASON))
         .addStringOption((o) => o.setName('mode').setDescription('Matching mode (default: exact)').addChoices(...MODE_CHOICES))
         .addBooleanOption((o) => o.setName('allow-pass').setDescription('Offer a human-verification challenge and pass (default: no)'))
         .addIntegerOption((o) => o.setName('pass-days').setDescription('How long a pass lasts, in days (default 30)').setMinValue(1).setMaxValue(365)))
@@ -70,7 +70,8 @@ function createBannedWords({ storage, log = console, maxRulesPerGuild = 100 } = 
     return {
       id: rule.id, name: rule.name, mode: rule.mode, reason: rule.reason, allowPass: rule.allowPass, passDays: rule.passDays,
       matches,
-      exempt: (roleIds, channelId) => channels.has(String(channelId)) || [...roleIds].some((r) => roles.has(String(r))),
+      exemptsChannels: (ids) => [...ids].some((c) => channels.has(String(c))),
+      exemptsRoles: (ids) => [...ids].some((r) => roles.has(String(r))),
     };
   };
   function activeRules(guildId) {
@@ -85,9 +86,15 @@ function createBannedWords({ storage, log = console, maxRulesPerGuild = 100 } = 
     }
     return list;
   }
-  /** Aturan aktif yang cocok dengan teks dan TIDAK dikecualikan untuk role/channel ini. */
-  function evaluate(guildId, text, { roleIds = [], channelId } = {}) {
-    return activeRules(guildId).filter((r) => !r.exempt(roleIds, channelId) && r.matches(text));
+  /**
+   * Aturan aktif yang cocok dengan teks dan TIDAK dikecualikan.
+   *  - channelIds / channelId: channel tempat pesan (thread: sertakan juga channel induknya).
+   *  - roleIds: ID role penulis. Kalau TIDAK diberikan (undefined) = role belum diketahui, pengecualian
+   *    role tidak diterapkan (dipakai untuk penyaringan murah sebelum mengambil data anggota).
+   */
+  function evaluate(guildId, text, { roleIds, channelId, channelIds } = {}) {
+    const channels = new Set([...(channelIds ?? []), ...(channelId ? [channelId] : [])].map(String));
+    return activeRules(guildId).filter((r) => r.matches(text) && !r.exemptsChannels(channels) && (roleIds === undefined || !r.exemptsRoles(roleIds)));
   }
 
   /* ---------------- perintah staf ---------------- */

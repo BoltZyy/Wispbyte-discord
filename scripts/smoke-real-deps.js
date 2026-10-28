@@ -15,6 +15,7 @@ const { buildCommandList } = require('../src/discord/commands');
 const { buildModerationCommandList } = require('../src/discord/moderation');
 const { buildVerificationCommandList } = require('../src/discord/verification');
 const { buildBannedWordCommandList } = require('../src/discord/bannedWords');
+const { buildModpassCommandList } = require('../src/discord/wordFilter');
 
 const providers = bot.buildProviderRegistry({ GEMINI_KEY_1: 'x', GEMINI_KEY_2: 'x', GROQ_KEY: 'x', OPENROUTER_KEY: 'x' });
 assert.deepEqual(providers.map((p) => p.id), ['gemini-1', 'gemini-2', 'groq-1', 'openrouter-1']);
@@ -33,6 +34,8 @@ assert.deepEqual(verifyCommands[0].options.map((o) => o.name), ['setup', 'questi
 const bwCommands = buildBannedWordCommandList(); // validasi builder asli: pilihan mode, tipe channel, subcommand
 assert.deepEqual(bwCommands.map((c) => c.name), ['banned-word']);
 assert.deepEqual(bwCommands[0].options.map((o) => o.name), ['add', 'edit', 'remove', 'list', 'test', 'exempt-role', 'exempt-channel']);
+const passCommands = buildModpassCommandList(); // validasi builder asli
+assert.deepEqual(passCommands[0].options.map((o) => o.name), ['list', 'info', 'revoke']);
 for (const c of commands) assert.ok(c.name && c.description, `command tanpa nama/deskripsi: ${JSON.stringify(c).slice(0, 80)}`);
 
 // Database SQLite (node:sqlite bawaan Node) di folder sementara: buka, tulis, baca, tutup.
@@ -49,4 +52,4 @@ assert.equal(storage.settings.get('G', 'k'), 1);
 storage.close();
 fs.rmSync(dir, { recursive: true, force: true });
 
-console.log(`OK — ${providers.length} provider, ${commands.length} + ${modCommands.length} + ${verifyCommands.length} + ${bwCommands.length} slash command, event ready = "${Events.ClientReady}", SQLite OK`);
+console.log(`OK — ${providers.length} provider, ${commands.length} + ${modCommands.length} + ${verifyCommands.length} + ${bwCommands.length} + ${passCommands.length} slash command, event ready = "${Events.ClientReady}", SQLite OK`);

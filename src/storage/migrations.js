@@ -104,6 +104,30 @@ const MIGRATIONS = [
       CREATE INDEX idx_rules_guild ON banned_word_rules (guild_id, enabled);
     `,
   },
+  {
+    version: 5,
+    name: 'moderation_passes',
+    sql: `
+      -- Pass = pengecualian untuk SATU aturan (guild + pengguna + aturan), selalu punya masa berlaku.
+      -- SQLite adalah sumber kebenaran: status dibaca langsung dari sini (tanpa cache) sehingga
+      -- pencabutan berlaku seketika. Menghapus aturan ikut menghapus pass-nya (ON DELETE CASCADE).
+      CREATE TABLE moderation_passes (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id       TEXT    NOT NULL,
+        user_id        TEXT    NOT NULL,
+        rule_id        INTEGER NOT NULL REFERENCES banned_word_rules (id) ON DELETE CASCADE,
+        source         TEXT    NOT NULL DEFAULT 'challenge' CHECK (source IN ('challenge', 'manual')),
+        status         TEXT    NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'revoked', 'expired')),
+        granted_at     INTEGER NOT NULL,
+        expires_at     INTEGER NOT NULL,
+        revoked_by     TEXT,
+        revoked_at     INTEGER,
+        revoked_reason TEXT
+      ) STRICT;
+      CREATE UNIQUE INDEX uq_pass_active ON moderation_passes (guild_id, user_id, rule_id) WHERE status = 'active';
+      CREATE INDEX idx_pass_guild ON moderation_passes (guild_id, status, expires_at);
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };

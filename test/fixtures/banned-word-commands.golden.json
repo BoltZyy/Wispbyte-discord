@@ -115,7 +115,7 @@
                     [
                       "setDescription",
                       [
-                        "Reason shown to staff (generic, not the pattern)"
+                        "Reason shown PUBLICLY in the notice (generic; never the pattern)"
                       ]
                     ],
                     [

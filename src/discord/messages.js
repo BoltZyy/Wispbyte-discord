@@ -41,10 +41,12 @@ async function fetchRepliedBotContext(message, client) {
 }
 
 function registerMessageHandler(client, providers, config) {
-  const { prefix, systemPrompt } = config;
+  const { prefix, systemPrompt, wordFilter } = config;
   const effectiveSystemPrompt = systemPrompt?.trim() || DEFAULT_SYSTEM_PROMPT;
 
   client.on('messageCreate', async (message) => {
+    // Filter kata terlarang berjalan PERTAMA: pesan yang dihapus tidak boleh dijawab AI.
+    if (wordFilter && await wordFilter.screen(message)) return;
     try {
       if (message.author.bot) return;
 

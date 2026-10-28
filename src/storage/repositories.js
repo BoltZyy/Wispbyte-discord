@@ -209,4 +209,48 @@ function createRulesRepo(db, { now = Date.now } = {}) {
   };
 }
 
-module.exports = { createSettingsRepo, createAuditRepo, createWarningsRepo, createVerificationRepo, createRulesRepo };
+/** Pass moderasi per aturan. Selalu dibaca dari database (tanpa cache). */
+function createPassesRepo(db, { now = Date.now } = {}) {
+  const byId = db.prepare('SELECT * FROM moderation_passes WHERE guild_id = ? AND id = ?');
+  const expireOld = db.prepare("UPDATE moderation_passes SET status = 'expired' WHERE guild_id = ? AND user_id = ? AND rule_id = ? AND status = 'active' AND expires_at <= ?");
+  const activeFor = db.prepare("SELECT * FROM moderation_passes WHERE guild_id = ? AND user_id = ? AND rule_id = ? AND status = 'active' AND expires_at > ?");
+  const insert = db.prepare('INSERT INTO moderation_passes (guild_id, user_id, rule_id, source, granted_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)');
+  const revoke = db.prepare("UPDATE moderation_passes SET status = 'revoked', revoked_by = ?, revoked_at = ?, revoked_reason = ? WHERE guild_id = ? AND id = ? AND status = 'active'");
+  const DAY = 24 * 3600 * 1000;
+  const map = (r) => r && ({
+    id: r.id, guildId: r.guild_id, userId: r.user_id, ruleId: r.rule_id, source: r.source, status: r.status,
+    grantedAt: r.granted_at, expiresAt: r.expires_at, revokedBy: r.revoked_by, revokedAt: r.revoked_at, revokedReason: r.revoked_reason,
+  });
+
+  return {
+    /** Memberi pass. Kalau sudah ada pass aktif yang belum habis, dikembalikan apa adanya (alreadyActive). */
+    grant({ guildId, userId, ruleId, passDays, source = 'challenge' } = {}) {
+      const g = needId('guildId', guildId); const u = needId('userId', userId); const t = now();
+      expireOld.run(g, u, Number(ruleId), t);
+      const existing = activeFor.get(g, u, Number(ruleId), t);
+      if (existing) return { row: map(existing), alreadyActive: true };
+      const res = insert.run(g, u, Number(ruleId), source, t, t + Number(passDays) * DAY);
+      return { row: map(byId.get(g, Number(res.lastInsertRowid))), alreadyActive: false };
+    },
+    hasActive(guildId, userId, ruleId) {
+      return Boolean(activeFor.get(needId('guildId', guildId), needId('userId', userId), Number(ruleId), now()));
+    },
+    get(guildId, id) { return map(byId.get(needId('guildId', guildId), Number(id))); },
+    /** Terbaru dulu. Default hanya yang aktif dan belum habis. */
+    list({ guildId, userId, activeOnly = true, limit = 25 } = {}) {
+      const where = ['guild_id = ?']; const params = [needId('guildId', guildId)];
+      if (userId !== undefined) { where.push('user_id = ?'); params.push(String(userId)); }
+      if (activeOnly) { where.push("status = 'active' AND expires_at > ?"); params.push(now()); }
+      const cap = Math.max(1, Math.min(MAX_LIST_LIMIT, Number(limit) || 25));
+      return db.prepare(`SELECT * FROM moderation_passes WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ${cap}`).all(...params).map(map);
+    },
+    revoke({ guildId, id, revokedBy, reason } = {}) {
+      const g = needId('guildId', guildId);
+      const res = revoke.run(needId('revokedBy', revokedBy), now(), reason ?? null, g, Number(id));
+      if (res.changes > 0) return { ok: true, row: map(byId.get(g, Number(id))) };
+      return { ok: false, reason: byId.get(g, Number(id)) ? 'already_inactive' : 'not_found' };
+    },
+  };
+}
+
+module.exports = { createSettingsRepo, createAuditRepo, createWarningsRepo, createVerificationRepo, createRulesRepo, createPassesRepo };
