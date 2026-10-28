@@ -78,6 +78,32 @@ const MIGRATIONS = [
       CREATE INDEX idx_verif_user ON verification_records (guild_id, user_id, started_at DESC);
     `,
   },
+  {
+    version: 4,
+    name: 'banned_word_rules',
+    sql: `
+      -- mode 'regex' dicadangkan (belum didukung; SQLite tidak bisa mengubah CHECK).
+      -- allow_pass = aturan ini menawarkan challenge dan pass (tahap 5); pass_days = masa berlaku pass.
+      -- Daftar pengecualian disimpan sebagai array JSON berisi ID role/channel.
+      CREATE TABLE banned_word_rules (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id        TEXT    NOT NULL,
+        name            TEXT    NOT NULL,
+        phrase          TEXT    NOT NULL,
+        mode            TEXT    NOT NULL CHECK (mode IN ('exact', 'evasion', 'regex')),
+        reason          TEXT    NOT NULL,
+        enabled         INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+        allow_pass      INTEGER NOT NULL DEFAULT 0 CHECK (allow_pass IN (0, 1)),
+        pass_days       INTEGER NOT NULL DEFAULT 30 CHECK (pass_days BETWEEN 1 AND 365),
+        exempt_roles    TEXT    NOT NULL DEFAULT '[]',
+        exempt_channels TEXT    NOT NULL DEFAULT '[]',
+        created_by      TEXT    NOT NULL,
+        created_at      INTEGER NOT NULL,
+        updated_at      INTEGER NOT NULL
+      ) STRICT;
+      CREATE INDEX idx_rules_guild ON banned_word_rules (guild_id, enabled);
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };

@@ -150,4 +150,63 @@ function createVerificationRepo(db, { now = Date.now } = {}) {
   };
 }
 
-module.exports = { createSettingsRepo, createAuditRepo, createWarningsRepo, createVerificationRepo };
+/** Aturan kata terlarang per server. */
+function createRulesRepo(db, { now = Date.now } = {}) {
+  const byId = db.prepare('SELECT * FROM banned_word_rules WHERE guild_id = ? AND id = ?');
+  const insert = db.prepare(`
+    INSERT INTO banned_word_rules (guild_id, name, phrase, mode, reason, allow_pass, pass_days, created_by, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
+  const remove = db.prepare('DELETE FROM banned_word_rules WHERE guild_id = ? AND id = ?');
+  const count = db.prepare('SELECT COUNT(*) AS n FROM banned_word_rules WHERE guild_id = ?');
+  const EDITABLE = { name: 'name', phrase: 'phrase', mode: 'mode', reason: 'reason', enabled: 'enabled', allowPass: 'allow_pass', passDays: 'pass_days' };
+
+  const map = (r) => r && ({
+    id: r.id, guildId: r.guild_id, name: r.name, phrase: r.phrase, mode: r.mode, reason: r.reason,
+    enabled: r.enabled === 1, allowPass: r.allow_pass === 1, passDays: r.pass_days,
+    exemptRoles: JSON.parse(r.exempt_roles), exemptChannels: JSON.parse(r.exempt_channels),
+    createdBy: r.created_by, createdAt: r.created_at, updatedAt: r.updated_at,
+  });
+  const get = (guildId, id) => map(byId.get(needId('guildId', guildId), Number(id)));
+
+  return {
+    add({ guildId, name, phrase, mode, reason, allowPass = false, passDays = 30, createdBy } = {}) {
+      const t = now();
+      const res = insert.run(needId('guildId', guildId), needId('name', name), needId('phrase', phrase), needId('mode', mode), needId('reason', reason),
+        allowPass ? 1 : 0, Number(passDays), needId('createdBy', createdBy), t, t);
+      return get(guildId, Number(res.lastInsertRowid));
+    },
+    get,
+    count(guildId) { return count.get(needId('guildId', guildId)).n; },
+    /** Terlama dulu (urutan id). enabledOnly = hanya yang aktif. */
+    list({ guildId, enabledOnly = false } = {}) {
+      const sql = `SELECT * FROM banned_word_rules WHERE guild_id = ?${enabledOnly ? ' AND enabled = 1' : ''} ORDER BY id`;
+      return db.prepare(sql).all(needId('guildId', guildId)).map(map);
+    },
+    /** Ubah sebagian field. Mengembalikan baris baru, atau undefined kalau tidak ditemukan. */
+    update(guildId, id, changes = {}) {
+      const sets = []; const params = [];
+      for (const [key, column] of Object.entries(EDITABLE)) {
+        if (changes[key] === undefined) continue;
+        sets.push(`${column} = ?`);
+        params.push(typeof changes[key] === 'boolean' ? (changes[key] ? 1 : 0) : changes[key]);
+      }
+      if (!sets.length) return get(guildId, id);
+      sets.push('updated_at = ?'); params.push(now());
+      const res = db.prepare(`UPDATE banned_word_rules SET ${sets.join(', ')} WHERE guild_id = ? AND id = ?`).run(...params, needId('guildId', guildId), Number(id));
+      return res.changes > 0 ? get(guildId, id) : undefined;
+    },
+    /** Tambah/hapus satu ID dari daftar pengecualian. kind: 'role' | 'channel'. */
+    setExempt(guildId, id, kind, targetId, on) {
+      const rule = get(guildId, id);
+      if (!rule) return undefined;
+      const column = kind === 'role' ? 'exempt_roles' : 'exempt_channels';
+      const list = new Set(kind === 'role' ? rule.exemptRoles : rule.exemptChannels);
+      if (on) list.add(String(targetId)); else list.delete(String(targetId));
+      db.prepare(`UPDATE banned_word_rules SET ${column} = ?, updated_at = ? WHERE guild_id = ? AND id = ?`).run(JSON.stringify([...list]), now(), String(guildId), Number(id));
+      return get(guildId, id);
+    },
+    remove(guildId, id) { return remove.run(needId('guildId', guildId), Number(id)).changes > 0; },
+  };
+}
+
+module.exports = { createSettingsRepo, createAuditRepo, createWarningsRepo, createVerificationRepo, createRulesRepo };

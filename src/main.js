@@ -11,6 +11,7 @@ const { buildCommandList } = require('./discord/commands');
 const { registerInteractionHandler } = require('./discord/interactions');
 const { buildModerationCommandList, createModeration } = require('./discord/moderation');
 const { buildVerificationCommandList, createVerification } = require('./discord/verification');
+const { buildBannedWordCommandList, createBannedWords } = require('./discord/bannedWords');
 const { registerMessageHandler } = require('./discord/messages');
 const { startActivityRotation } = require('./discord/presence');
 const { OWNER_ID } = require('./core/owner');
@@ -77,7 +78,8 @@ async function main() {
 
   const moderation = createModeration({ storage, ownerId: OWNER_ID });
   const verification = createVerification({ storage });
-  registerInteractionHandler(client, providers, { moderation, verification });
+  const bannedWords = createBannedWords({ storage });
+  registerInteractionHandler(client, providers, { moderation, verification, bannedWords });
   registerMessageHandler(client, providers, {
     prefix:       process.env.COMMAND_PREFIX || '!tanya',
     systemPrompt: process.env.SYSTEM_PROMPT  || process.env.Personality,
@@ -91,7 +93,7 @@ async function main() {
     const rest = new REST({ version: '10' }).setToken(token);
     try {
       console.log('Refreshing application (/) commands...');
-      await rest.put(Routes.applicationCommands(client.user.id), { body: [...buildCommandList(), ...buildModerationCommandList(), ...buildVerificationCommandList()] });
+      await rest.put(Routes.applicationCommands(client.user.id), { body: [...buildCommandList(), ...buildModerationCommandList(), ...buildVerificationCommandList(), ...buildBannedWordCommandList()] });
       console.log('Successfully reloaded application (/) commands.');
     } catch (error) {
       console.error('Failed to register slash commands:', error);
