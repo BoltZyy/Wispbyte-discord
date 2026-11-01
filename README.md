@@ -75,4 +75,4 @@ Ovelia is an ongoing project. Features and internal architecture may change as d
 
 License
 
-No license has been specified yet.
+No license has been specified yet. But you could fork it, I don't really mind.
