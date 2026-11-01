@@ -71,7 +71,7 @@ Ovelia/
 
 Development Status
 
-Ovelia is an ongoing project. Features and internal architecture may change as development continues.
+Ovelia is an ongoing project. Features and internal architecture may change as development continues, or completely abandoned if I get too busy all day
 
 License
 
