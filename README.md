@@ -22,6 +22,7 @@ Tech Stack
 - Google GenAI SDK
 - Groq SDK
 - OpenAI SDK
+- other SDKs if you use other.
 
 Installation
 
