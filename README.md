@@ -1,5 +1,5 @@
 ## placeholder apparently 
-# might be on maintenance for a while since my life's been really busy lately...
+# not currently maintained as my life got busier, but maybe I'll continue it later
 
 Ovelia
 
