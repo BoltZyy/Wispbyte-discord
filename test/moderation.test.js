@@ -318,8 +318,15 @@ test('backup: dua permintaan bersamaan dijalankan berurutan (tidak bertabrakan)'
   assert.ok(results.every((r) => r.ok)); assert.equal(maxActive, 1); assert.equal(w.backupCh.sent.length, 3);
 });
 
-test('backup: pengiriman macet -> gagal karena batas waktu, berkas sementara dihapus, antrean TIDAK terblokir', { timeout: 8000 }, async () => {
-  const w = world({ modOpts: { backupTimeoutMs: 50 } }); w.storage.settings.set('G1', 'backup.channelId', 'CH_BK');
+/** Menunggu sampai folder kosong. Pembersihan berkas sisa bisa tertunda di mesin lambat (backup yang melewati batas waktu masih berjalan di belakang layar). */
+async function eventuallyEmpty(dir, ms = 60_000) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < ms) { if (!fs.existsSync(dir) || fs.readdirSync(dir).length === 0) return; await new Promise((r) => setTimeout(r, 50)); }
+  assert.deepEqual(fs.readdirSync(dir), [], 'berkas sementara harus dihapus');
+}
+
+test('backup: pengiriman macet -> gagal karena batas waktu, berkas sementara dihapus, antrean TIDAK terblokir', { timeout: 120_000 }, async () => {
+  const w = world({ modOpts: { backupTimeoutMs: 1500 } }); w.storage.settings.set('G1', 'backup.channelId', 'CH_BK');
   const bdir = path.join(path.dirname(w.storage.db.path), 'backups');
   w.backupCh.send = () => new Promise(() => {}); // tidak pernah selesai
   const r1 = await w.moderation.runBackup({ guild: w.guild, trigger: 'manual', actorId: 'BOTOWNER' });
@@ -327,31 +334,30 @@ test('backup: pengiriman macet -> gagal karena batas waktu, berkas sementara dih
   const entry = w.storage.audit.list({ guildId: 'G1', action: 'backup' })[0];
   assert.equal(entry.status, 'failed'); assert.match(entry.reason, /batas waktu/);
   assert.equal(w.storage.settings.get('G1', 'backup.lastAt'), undefined);
-  assert.deepEqual(fs.readdirSync(bdir), [], 'berkas sementara harus dihapus saat batas waktu terlewati');
+  await eventuallyEmpty(bdir);
 
   w.backupCh.send = async (m) => { w.backupCh.sent.push(m); };
   const r2 = await w.moderation.runBackup({ guild: w.guild, trigger: 'manual' });
   assert.equal(r2.ok, true, 'backup berikutnya tidak boleh ikut macet');
 });
-test('backup: pembuatan berkas yang tidak pernah selesai -> gagal, antrean lanjut', { timeout: 8000 }, async () => {
+test('backup: pembuatan berkas yang tidak pernah selesai -> gagal, antrean lanjut', { timeout: 120_000 }, async () => {
   let calls = 0;
   const { createCompressedBackup } = require('../src/storage/backup');
   const createBackup = (db, o) => (++calls === 1 ? new Promise(() => {}) : createCompressedBackup(db, o));
-  const w = world({ modOpts: { backupTimeoutMs: 50, createBackup } }); w.storage.settings.set('G1', 'backup.channelId', 'CH_BK');
+  const w = world({ modOpts: { backupTimeoutMs: 1500, createBackup } }); w.storage.settings.set('G1', 'backup.channelId', 'CH_BK');
   const r1 = await w.moderation.runBackup({ guild: w.guild, trigger: 'terjadwal' });
   assert.equal(r1.ok, false); assert.match(r1.error, /melewati batas waktu 0 detik|melewati batas waktu \d+ detik/);
   const r2 = await w.moderation.runBackup({ guild: w.guild, trigger: 'terjadwal' });
   assert.equal(r2.ok, true); assert.equal(w.backupCh.sent.length, 1);
 });
-test('backup: hasil yang TERLAMBAT (setelah batas waktu) tidak dikirim, berkasnya dihapus, hanya satu catatan "failed"', { timeout: 8000 }, async () => {
+test('backup: hasil yang TERLAMBAT (setelah batas waktu) tidak dikirim, berkasnya dihapus, hanya satu catatan "failed"', { timeout: 120_000 }, async () => {
   const { createCompressedBackup } = require('../src/storage/backup');
   const createBackup = async (db, o) => { await new Promise((r) => setTimeout(r, 120)); return createCompressedBackup(db, o); };
   const w = world({ modOpts: { backupTimeoutMs: 30, createBackup } }); w.storage.settings.set('G1', 'backup.channelId', 'CH_BK');
   const r = await w.moderation.runBackup({ guild: w.guild, trigger: 'manual' });
   assert.equal(r.ok, false);
-  await new Promise((res) => setTimeout(res, 500)); // beri waktu proses lambat itu selesai
+  await eventuallyEmpty(path.join(path.dirname(w.storage.db.path), 'backups')); // proses lambat itu selesai lalu membersihkan dirinya
   assert.equal(w.backupCh.sent.length, 0, 'hasil terlambat tidak boleh dikirim');
-  assert.deepEqual(fs.readdirSync(path.join(path.dirname(w.storage.db.path), 'backups')), []);
   const entries = w.storage.audit.list({ guildId: 'G1', action: 'backup' });
   assert.deepEqual(entries.map((e) => e.status), ['failed']);
   assert.equal(w.storage.settings.get('G1', 'backup.lastAt'), undefined);

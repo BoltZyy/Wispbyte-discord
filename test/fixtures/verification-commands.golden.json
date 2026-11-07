@@ -143,6 +143,75 @@
             [
               "setName",
               [
+                "public"
+              ]
+            ],
+            [
+              "setDescription",
+              [
+                "Mark a channel as intentionally visible to unverified members"
+              ]
+            ],
+            [
+              "addChannelOption",
+              [
+                {
+                  "cb": [
+                    [
+                      "setName",
+                      [
+                        "channel"
+                      ]
+                    ],
+                    [
+                      "setDescription",
+                      [
+                        "Channel"
+                      ]
+                    ],
+                    [
+                      "setRequired",
+                      [
+                        true
+                      ]
+                    ]
+                  ]
+                }
+              ]
+            ],
+            [
+              "addBooleanOption",
+              [
+                {
+                  "cb": [
+                    [
+                      "setName",
+                      [
+                        "remove"
+                      ]
+                    ],
+                    [
+                      "setDescription",
+                      [
+                        "Remove it from the list instead"
+                      ]
+                    ]
+                  ]
+                }
+              ]
+            ]
+          ]
+        }
+      ]
+    ],
+    [
+      "addSubcommand",
+      [
+        {
+          "cb": [
+            [
+              "setName",
+              [
                 "status"
               ]
             ],

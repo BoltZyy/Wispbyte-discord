@@ -13,6 +13,7 @@ const { buildModerationCommandList, createModeration } = require('./discord/mode
 const { buildVerificationCommandList, createVerification } = require('./discord/verification');
 const { buildBannedWordCommandList, createBannedWords } = require('./discord/bannedWords');
 const { buildModpassCommandList, createWordFilter } = require('./discord/wordFilter');
+const { buildSoftbanVerifyCommandList, createSoftbanVerify } = require('./discord/softbanVerify');
 const { registerMessageHandler } = require('./discord/messages');
 const { startActivityRotation } = require('./discord/presence');
 const { OWNER_ID } = require('./core/owner');
@@ -80,11 +81,12 @@ async function main() {
   }
 
   const moderation = createModeration({ storage, ownerId: OWNER_ID });
-  const verification = createVerification({ storage });
+  const softbanVerify = createSoftbanVerify({ storage });
+  const verification = createVerification({ storage, softbanVerify });
   const bannedWords = createBannedWords({ storage });
   const wordFilter = createWordFilter({ storage, bannedWords });
   wordFilter.register(client); // edit pesan (messageUpdate)
-  registerInteractionHandler(client, providers, { moderation, verification, bannedWords, wordFilter });
+  registerInteractionHandler(client, providers, { moderation, verification, bannedWords, wordFilter, softbanVerify });
   registerMessageHandler(client, providers, {
     prefix:       process.env.COMMAND_PREFIX || '!tanya',
     systemPrompt: process.env.SYSTEM_PROMPT  || process.env.Personality,
@@ -99,7 +101,7 @@ async function main() {
     const rest = new REST({ version: '10' }).setToken(token);
     try {
       console.log('Refreshing application (/) commands...');
-      await rest.put(Routes.applicationCommands(client.user.id), { body: [...buildCommandList(), ...buildModerationCommandList(), ...buildVerificationCommandList(), ...buildBannedWordCommandList(), ...buildModpassCommandList()] });
+      await rest.put(Routes.applicationCommands(client.user.id), { body: [...buildCommandList(), ...buildModerationCommandList(), ...buildVerificationCommandList(), ...buildBannedWordCommandList(), ...buildModpassCommandList(), ...buildSoftbanVerifyCommandList()] });
       console.log('Successfully reloaded application (/) commands.');
     } catch (error) {
       console.error('Failed to register slash commands:', error);

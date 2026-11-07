@@ -128,6 +128,34 @@ const MIGRATIONS = [
       CREATE INDEX idx_pass_guild ON moderation_passes (guild_id, status, expires_at);
     `,
   },
+  {
+    version: 6,
+    name: 'verify_softbans',
+    sql: `
+      -- Kasus softban-verifikasi: anggota kehilangan role Verified, harus verifikasi ulang, lalu MENUNGGU
+      -- persetujuan staf. Status 'awaiting_verification', 'pending_approval', dan 'rejected' bersifat
+      -- MEMBLOKIR: selama salah satunya ada, jalur verifikasi biasa tidak boleh memberi role Verified.
+      -- Hanya satu kasus memblokir per anggota (indeks unik parsial).
+      CREATE TABLE verify_softbans (
+        id               INTEGER PRIMARY KEY AUTOINCREMENT,
+        guild_id         TEXT    NOT NULL,
+        user_id          TEXT    NOT NULL,
+        moderator_id     TEXT    NOT NULL,
+        reason           TEXT,
+        status           TEXT    NOT NULL DEFAULT 'awaiting_verification'
+                         CHECK (status IN ('awaiting_verification', 'pending_approval', 'approved', 'rejected', 'cancelled')),
+        created_at       INTEGER NOT NULL,
+        verified_at      INTEGER,
+        decided_by       TEXT,
+        decided_at       INTEGER,
+        decision_note    TEXT,
+        role_restored_at INTEGER
+      ) STRICT;
+      CREATE UNIQUE INDEX uq_softban_blocking ON verify_softbans (guild_id, user_id)
+        WHERE status IN ('awaiting_verification', 'pending_approval', 'rejected');
+      CREATE INDEX idx_softban_guild ON verify_softbans (guild_id, status);
+    `,
+  },
 ];
 
 module.exports = { MIGRATIONS };

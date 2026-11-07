@@ -39,12 +39,15 @@ function buildVerificationCommandList() {
         .addChannelOption((o) => o.setName('channel').setDescription('Verification channel (default: where the panel is posted)').addChannelTypes(ChannelType.GuildText)))
       .addSubcommand((s) => s.setName('question').setDescription('Set the verification question and its secret answer'))
       .addSubcommand((s) => s.setName('panel').setDescription('Post the verification panel (Start button)'))
+      .addSubcommand((s) => s.setName('public').setDescription('Mark a channel as intentionally visible to unverified members')
+        .addChannelOption((o) => o.setName('channel').setDescription('Channel').setRequired(true))
+        .addBooleanOption((o) => o.setName('remove').setDescription('Remove it from the list instead')))
       .addSubcommand((s) => s.setName('status').setDescription('Show the verification configuration')),
   ].map((c) => c.toJSON());
 }
 
 function createVerification({
-  storage, now = Date.now, log = console,
+  storage, softbanVerify, now = Date.now, log = console,
   sessionMs = 120_000, maxAttempts = 3, cooldownMs = 15_000,
   store = new TtlStore({ now }),
 } = {}) {
@@ -106,6 +109,10 @@ function createVerification({
     const cfg = readConfig(guildId);
     if (!cfg.ready) return reply(i, '⚠️ Verifikasi belum dikonfigurasi oleh staf.');
     if (memberHasRole(i.member, cfg.roleId)) return reply(i, '✅ Anda sudah terverifikasi.');
+    // Softban-verifikasi: role dipulihkan HANYA oleh persetujuan staf, bukan oleh verifikasi biasa.
+    const blocking = storage.softbans.getBlocking(guildId, i.user.id);
+    if (blocking?.status === 'pending_approval') return reply(i, '✅ Verifikasi ulang Anda sudah lolos dan sedang menunggu persetujuan staf.');
+    if (blocking?.status === 'rejected') return reply(i, '❌ Akses Anda tidak dapat dipulihkan otomatis. Hubungi staf.');
 
     const key = keyOf(guildId, i.user.id);
     const existing = store.get(key);
@@ -157,12 +164,26 @@ function createVerification({
 
       if (correct) {
         // Simpan hasil DULU. Kalau gagal, error dilempar dan role tidak diberikan.
-        storage.db.transaction(() => {
+        const outcome = storage.db.transaction(() => {
+          const blocking = storage.softbans.getBlocking(session.guildId, session.userId); // dibaca di SINI (saat sukses), bukan saat sesi dimulai
           storage.verification.finish(session.recordId, 'passed', attempts);
-          storage.audit.log({ guildId: session.guildId, action: 'verification_pass', targetId: session.userId, details: { attempts } });
+          let pending = null;
+          if (blocking?.status === 'awaiting_verification') {
+            pending = storage.softbans.markPending(session.guildId, session.userId);
+            storage.audit.log({ guildId: session.guildId, action: 'softban_verify_pending', targetId: session.userId, details: { caseId: blocking.id, attempts } });
+          }
+          storage.audit.log({ guildId: session.guildId, action: 'verification_pass', targetId: session.userId, details: { attempts, ...(blocking ? { softbanCaseId: blocking.id } : {}) } });
+          return { blocking, pending };
         });
         session.attempts = attempts;
         session.state = 'passed';
+        if (outcome.blocking) {
+          // Anggota yang di-softban TIDAK boleh mendapat role dari jalur ini: menunggu persetujuan staf.
+          if (outcome.pending && softbanVerify) await softbanVerify.notifyPending(i.guild, outcome.pending);
+          return reply(i, outcome.blocking.status === 'rejected'
+            ? '❌ Jawaban Anda benar, tetapi akses Anda tidak dapat dipulihkan otomatis. Hubungi staf.'
+            : '✅ Jawaban benar. Verifikasi ulang Anda tercatat; staf akan meninjau sebelum akses dipulihkan.');
+        }
         try {
           await i.member.roles.add(cfg.roleId, 'Verifikasi berhasil');
         } catch (err) {
@@ -239,12 +260,27 @@ function createVerification({
       return reply(i, `✅ Panel verifikasi dikirim ke <#${channel.id}>.`);
     }
 
+    if (sub === 'public') {
+      const channel = i.options.getChannel('channel', true);
+      const remove = i.options.getBoolean('remove') ?? false;
+      if (channel.guildId !== guildId) return reply(i, '❌ Pilih channel di server ini.');
+      const list = new Set(storage.settings.get(guildId, 'verify.publicChannelIds', []));
+      if (!remove && !list.has(channel.id) && list.size >= 20) return reply(i, '❌ Maksimal 20 channel publik.');
+      if (remove) list.delete(channel.id); else list.add(channel.id);
+      storage.db.transaction(() => {
+        storage.settings.set(guildId, 'verify.publicChannelIds', [...list]);
+        storage.audit.log({ guildId, action: 'config_change', actorId: i.user.id, details: { key: 'verify.publicChannelIds', channelId: channel.id, removed: remove } });
+      });
+      return reply(i, remove ? `✅ <#${channel.id}> dihapus dari daftar channel publik.` : `✅ <#${channel.id}> ditandai sebagai channel publik (boleh dilihat anggota yang belum terverifikasi).`);
+    }
+
     // status
     const cfg = readConfig(guildId);
     return reply(i, [
       '⚙️ **Konfigurasi verifikasi**',
       `Role Verified: ${cfg.roleId ? `<@&${cfg.roleId}>` : '(belum diatur)'}`,
       `Channel: ${cfg.channelId ? `<#${cfg.channelId}>` : '(belum diatur)'}`,
+      `Channel publik: ${(storage.settings.get(guildId, 'verify.publicChannelIds', [])).map((c) => `<#${c}>`).join(', ') || '(tidak ada)'}`,
       `Pertanyaan: ${cfg.question ? cfg.question : '(belum diatur)'}`,
       `Jawaban: ${cfg.answer ? '(tersimpan sebagai hash, tidak dapat dilihat)' : '(belum diatur)'}`,
       `Aturan: ${Math.round(sessionMs / 1000)} detik, maks ${maxAttempts} jawaban salah, cooldown ${Math.round(cooldownMs / 1000)} detik.`,

@@ -253,4 +253,59 @@ function createPassesRepo(db, { now = Date.now } = {}) {
   };
 }
 
-module.exports = { createSettingsRepo, createAuditRepo, createWarningsRepo, createVerificationRepo, createRulesRepo, createPassesRepo };
+/** Kasus softban-verifikasi (persetujuan staf sebelum role Verified dipulihkan). */
+function createSoftbanRepo(db, { now = Date.now } = {}) {
+  const BLOCKING = "('awaiting_verification', 'pending_approval', 'rejected')";
+  const byId = db.prepare('SELECT * FROM verify_softbans WHERE guild_id = ? AND id = ?');
+  const blocking = db.prepare(`SELECT * FROM verify_softbans WHERE guild_id = ? AND user_id = ? AND status IN ${BLOCKING}`);
+  const insert = db.prepare('INSERT INTO verify_softbans (guild_id, user_id, moderator_id, reason, created_at) VALUES (?, ?, ?, ?, ?)');
+  const toPending = db.prepare("UPDATE verify_softbans SET status = 'pending_approval', verified_at = ? WHERE guild_id = ? AND user_id = ? AND status = 'awaiting_verification'");
+  const restored = db.prepare('UPDATE verify_softbans SET role_restored_at = ? WHERE guild_id = ? AND id = ? AND role_restored_at IS NULL');
+  const map = (r) => r && ({
+    id: r.id, guildId: r.guild_id, userId: r.user_id, moderatorId: r.moderator_id, reason: r.reason, status: r.status,
+    createdAt: r.created_at, verifiedAt: r.verified_at, decidedBy: r.decided_by, decidedAt: r.decided_at,
+    decisionNote: r.decision_note, roleRestoredAt: r.role_restored_at,
+  });
+  const get = (guildId, id) => map(byId.get(needId('guildId', guildId), Number(id)));
+  const getBlocking = (guildId, userId) => map(blocking.get(needId('guildId', guildId), needId('userId', userId)));
+
+  return {
+    get,
+    /** Kasus yang memblokir (menunggu verifikasi / persetujuan / ditolak). */
+    getBlocking,
+    /** Membuka kasus. Hasil: { ok: true, row } | { ok: false, existing } kalau anggota sudah punya kasus memblokir. */
+    open({ guildId, userId, moderatorId, reason } = {}) {
+      const existing = getBlocking(guildId, userId);
+      if (existing) return { ok: false, existing };
+      const res = insert.run(needId('guildId', guildId), needId('userId', userId), needId('moderatorId', moderatorId), reason ?? null, now());
+      return { ok: true, row: get(guildId, Number(res.lastInsertRowid)) };
+    },
+    /** awaiting_verification -> pending_approval (atomik). Mengembalikan kasus, atau undefined kalau tidak dalam status itu. */
+    markPending(guildId, userId) {
+      const res = toPending.run(now(), needId('guildId', guildId), needId('userId', userId));
+      return res.changes > 0 ? getBlocking(guildId, userId) : undefined;
+    },
+    /** Perpindahan status yang diizinkan hanya dari status tertentu. Hasil: { ok, row } | { ok: false, reason, row? }. */
+    transition({ guildId, id, from, to, by, note } = {}) {
+      const row = get(guildId, id);
+      if (!row) return { ok: false, reason: 'not_found' };
+      if (!from.includes(row.status)) return { ok: false, reason: 'wrong_status', row };
+      const marks = from.map(() => '?').join(', ');
+      const res = db.prepare(`UPDATE verify_softbans SET status = ?, decided_by = ?, decided_at = ?, decision_note = ? WHERE guild_id = ? AND id = ? AND status IN (${marks})`)
+        .run(to, needId('by', by), now(), note ?? null, String(guildId), Number(id), ...from);
+      return res.changes > 0 ? { ok: true, row: get(guildId, id) } : { ok: false, reason: 'wrong_status', row: get(guildId, id) };
+    },
+    markRoleRestored(guildId, id) { return restored.run(now(), needId('guildId', guildId), Number(id)).changes > 0; },
+    /** Terbaru dulu. statuses: daftar status (default: yang memblokir). userId: filter anggota. */
+    list({ guildId, statuses, userId, limit = 15 } = {}) {
+      const where = ['guild_id = ?']; const params = [needId('guildId', guildId)];
+      const st = statuses ?? ['awaiting_verification', 'pending_approval', 'rejected'];
+      where.push(`status IN (${st.map(() => '?').join(', ')})`); params.push(...st);
+      if (userId !== undefined) { where.push('user_id = ?'); params.push(String(userId)); }
+      const cap = Math.max(1, Math.min(MAX_LIST_LIMIT, Number(limit) || 15));
+      return db.prepare(`SELECT * FROM verify_softbans WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ${cap}`).all(...params).map(map);
+    },
+  };
+}
+
+module.exports = { createSettingsRepo, createAuditRepo, createWarningsRepo, createVerificationRepo, createRulesRepo, createPassesRepo, createSoftbanRepo };

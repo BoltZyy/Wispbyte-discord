@@ -251,7 +251,7 @@ test('screen: register() memasang listener messageUpdate yang menyaring edit', a
   const handlers = {}; w.wf.register({ on: (e, f) => { handlers[e] = f; } });
   assert.equal(typeof handlers.messageUpdate, 'function');
   handlers.messageUpdate({ partial: true }, w.msg({ id: 'E1', content: 'check my bio' }));
-  await new Promise((r) => setTimeout(r, 20));
+  for (let n = 0; n < 100 && !w.deletes.length; n++) await new Promise((r) => setTimeout(r, 20)); // tunggu hasil asinkron (mesin lambat)
   assert.deepEqual(w.deletes, ['E1']);
 });
 test('notifikasi: satu per pengguna per jendela (anti-amplifikasi), pesan tetap dihapus; kegagalan kirim tidak melempar', async () => {

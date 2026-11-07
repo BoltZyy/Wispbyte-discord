@@ -27,7 +27,7 @@ const silentLog = () => { const out = { logs: [], errors: [] }; out.log = (m) =>
 test('db: database baru dimigrasi ke versi terbaru, tabel ada, journal WAL', () => {
   const db = openDatabase(path.join(tmpDir(), 'a.sqlite'));
   assert.equal(db.schemaVersion, MIGRATIONS[MIGRATIONS.length - 1].version);
-  assert.deepEqual(tables(db), ['banned_word_rules', 'guild_settings', 'moderation_logs', 'moderation_passes', 'verification_records', 'warnings']);
+  assert.deepEqual(tables(db), ['banned_word_rules', 'guild_settings', 'moderation_logs', 'moderation_passes', 'verification_records', 'verify_softbans', 'warnings']);
   assert.equal(db.journalMode, 'wal');
   db.close();
 });
